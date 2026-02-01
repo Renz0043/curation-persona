@@ -38,7 +38,7 @@ graph TD
     end
 
     subgraph "Agent Layer (Cloud Run)"
-        Hunter[Hunter Agent<br/>Gemini 2.5 Flash]
+        Collector[Collector Agent<br/>Gemini 2.5 Flash]
         Librarian[Librarian Agent<br/>Vector Search]
         Researcher[Researcher Agent<br/>Gemini 2.5 Pro]
     end
@@ -60,12 +60,12 @@ graph TD
     Scheduler --> PubSub
     LineBot -.-> PubSub
 
-    PubSub --> Hunter
-    Hunter --> RSS
-    Hunter --> Librarian
+    PubSub --> Collector
+    Collector --> RSS
+    Collector --> Librarian
     Librarian --> VectorDB
     Librarian --> Notion
-    Hunter --> Researcher
+    Collector --> Researcher
     Researcher --> Firestore
 
     Dashboard --> Firestore
@@ -75,7 +75,7 @@ graph TD
 
 | コンポーネント | 責務 | 技術 |
 |----------------|------|------|
-| **Hunter Agent** | RSS巡回、初期フィルタリング、エージェント連携の起点 | Cloud Run, Python, Gemini Flash |
+| **Collector Agent** | RSS巡回、初期フィルタリング、エージェント連携の起点 | Cloud Run, Python, Gemini Flash |
 | **Librarian Agent** | ユーザーコンテキストとの関連性判定 | Cloud Run, Python, Vector Search |
 | **Researcher Agent** | 詳細レポート生成、Firestore保存 | Cloud Run, Python, Gemini Pro |
 | **Dashboard** | レポート表示、ユーザー認証、フィードバック収集 | Next.js, Firebase Auth |
@@ -91,43 +91,60 @@ firestore/
 ├── users/{userId}
 │   ├── notionAccessToken: string (encrypted)
 │   ├── notionWorkspaceId: string
-│   ├── rssSources: string[]
+│   ├── sources: [                    // 記事ソース設定（拡張可能）
+│   │     {
+│   │       id: string                // "src_001"
+│   │       type: "rss" | "website" | "newsletter" | "api"
+│   │       name: string              // "Hacker News"
+│   │       enabled: boolean
+│   │       config: {                 // タイプ固有の設定
+│   │         url?: string
+│   │         selector?: string       // website用
+│   │         email_filter?: string   // newsletter用
+│   │       }
+│   │     }
+│   │   ]
 │   ├── preferences: {
-│   │     dailyReportTime: string  // "06:00"
+│   │     dailyReportTime: string     // "06:00"
 │   │   }
 │   └── createdAt: timestamp
 │
-├── reports/{reportId}
+├── collections/{collectionId}        // 日次の記事コレクション
 │   ├── userId: string
-│   ├── date: string              // "2025-01-15"
+│   ├── date: string                  // "2025-01-15"
 │   ├── articles: [
 │   │     {
 │   │       title: string
 │   │       url: string
 │   │       source: string
-│   │       summary: string
-│   │       relevanceScore: number  // 0.0 - 1.0
+│   │       sourceType: "rss" | "website" | "newsletter" | "api"
+│   │       content: string
+│   │       publishedAt: timestamp
+│   │       scoringStatus: "pending" | "scoring" | "scored"
+│   │       relevanceScore: number    // 0.0 - 1.0
 │   │       relevanceReason: string
 │   │       relatedNotionPages: string[]
-│   │       deepDiveReport: string
+│   │       isPickup: boolean
+│   │       researchStatus: "pending" | "researching" | "completed" | null
+│   │       deepDiveReport: string | null
 │   │       userFeedback: "positive" | "neutral" | "negative" | null
 │   │     }
 │   │   ]
-│   ├── status: "processing" | "completed" | "failed"
+│   ├── status: "collecting" | "scoring" | "researching" | "completed" | "failed"
 │   └── createdAt: timestamp
 │
 └── notionEmbeddings/{embeddingId}
     ├── userId: string
     ├── notionPageId: string
     ├── notionPageTitle: string
-    ├── content: string           // 元テキスト（デバッグ用）
-    ├── embeddingVector: number[] // Vector Search側で管理
+    ├── content: string               // 元テキスト（デバッグ用）
+    ├── embeddingVector: number[]     // Vector Search側で管理
     └── updatedAt: timestamp
 ```
 
 ### 3.2 Pub/Sub メッセージ形式
 
-#### Topic: `batch-trigger`
+#### Topic: `batch-trigger`（Scheduler → Collector）
 ```json
 {
   "type": "daily_batch",
@@ -136,17 +153,20 @@ firestore/
 }
 ```
 
-#### Topic: `research-request`
+#### Topic: `score-request`（Collector → Librarian）
 ```json
 {
   "userId": "user_123",
-  "reportId": "report_456",
-  "article": {
-    "title": "...",
-    "url": "...",
-    "relevanceScore": 0.85,
-    "relevanceReason": "..."
-  }
+  "collectionId": "collection_user_123_20250115"
+}
+```
+
+#### Topic: `research-request`（Librarian → Researcher）
+```json
+{
+  "userId": "user_123",
+  "collectionId": "collection_user_123_20250115",
+  "articleUrl": "https://example.com/article"
 }
 ```
 
@@ -167,35 +187,34 @@ sequenceDiagram
     autonumber
     participant Scheduler as Cloud Scheduler
     participant PubSub as Pub/Sub
-    participant Hunter as Hunter Agent
+    participant Collector as Collector Agent
+    participant DB as Firestore
     participant Librarian as Librarian Agent
     participant Vector as Vector Search
     participant Researcher as Researcher Agent
-    participant DB as Firestore
 
     Note over Scheduler: 毎朝 06:00 JST
-    Scheduler->>PubSub: batch-trigger メッセージ
-    PubSub->>Hunter: トリガー受信
+    Scheduler->>PubSub: batch-trigger
+    PubSub->>Collector: トリガー受信
 
-    Hunter->>Hunter: RSS巡回（並列）
-    Hunter->>Hunter: Gemini Flash で初期スクリーニング
-    Note right of Hunter: 50件 → 20件に絞り込み
+    Collector->>Collector: RSS巡回（並列）
+    Note right of Collector: 全記事を収集
+    Collector->>DB: 記事保存 (scoring_status: PENDING)
+    Collector->>PubSub: score-request
 
-    loop 各候補記事
-        Hunter->>Librarian: 関連性チェック依頼
-        Librarian->>Vector: 類似ベクトル検索
-        Vector-->>Librarian: 関連Notionページ
-        Librarian-->>Hunter: 判定結果 (Go/No-Go)
-    end
-    Note right of Hunter: 20件 → 8件に絞り込み
+    PubSub->>Librarian: スコアリング依頼
+    Librarian->>DB: 記事読み取り
+    Librarian->>Vector: 各記事のベクトル検索
+    Vector-->>Librarian: 類似Notionページ + スコア
+    Librarian->>DB: スコア書き戻し (scoring_status: SCORED)
+    Note right of Librarian: 上位N件をピックアップ
 
-    Hunter->>DB: レポート作成（status: processing）
-
-    loop 選別された記事
-        Hunter->>PubSub: research-request
+    loop ピックアップ記事のみ
+        Librarian->>PubSub: research-request
         PubSub->>Researcher: 詳細調査依頼
+        Researcher->>DB: 記事読み取り
         Researcher->>Researcher: Gemini Pro で深掘り
-        Researcher->>DB: 記事レポート追加
+        Researcher->>DB: レポート保存 (research_status: COMPLETED)
     end
 
     Researcher->>DB: status: completed

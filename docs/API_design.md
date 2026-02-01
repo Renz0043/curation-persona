@@ -6,65 +6,50 @@
 
 ## 1. 内部API（Cloud Run間）
 
-### Hunter Agent
+### Collector Agent（手動トリガー用）
 
 ```
-POST /api/v1/hunt
+POST /api/v1/collect
 Content-Type: application/json
 
 Request:
 {
-  "userId": "user_123",
-  "rssSources": ["https://example.com/rss"]
+  "userId": "user_123"
 }
 
 Response:
 {
   "status": "success",
-  "articlesFound": 50,
-  "articlesFiltered": 8,
-  "reportId": "report_456"
+  "articlesTotal": 15,
+  "collectionId": "collection_user_123_20250115"
 }
 ```
+
+> 通常はPub/Sub（batch-trigger）経由でトリガーされる。
+> 手動トリガー後、スコアリング・詳細調査は非同期で実行される。
 
 ### Librarian Agent
 
-```
-POST /api/v1/check-relevance
-Content-Type: application/json
+> Pub/Sub（score-request）経由でトリガーされる。外部APIなし。
 
-Request:
-{
-  "userId": "user_123",
-  "article": {
-    "title": "...",
-    "content": "..."
-  }
-}
+### Researcher Agent
 
-Response:
-{
-  "isRelevant": true,
-  "score": 0.85,
-  "reason": "過去のメモ「AIエージェント設計パターン」と関連",
-  "relatedPages": ["notion_page_id_1", "notion_page_id_2"]
-}
-```
+> Pub/Sub（research-request）経由でトリガーされる。外部APIなし。
 
 ---
 
 ## 2. 外部API（Dashboard向け）
 
-### レポート取得
+### コレクション取得
 
 ```
-GET /api/reports?date=2025-01-15
+GET /api/collections?date=2025-01-15
 Authorization: Bearer {firebase_id_token}
 
 Response:
 {
-  "report": {
-    "id": "report_456",
+  "collection": {
+    "id": "collection_user_123_20250115",
     "date": "2025-01-15",
     "status": "completed",
     "articles": [...]
@@ -75,12 +60,12 @@ Response:
 ### フィードバック送信
 
 ```
-POST /api/reports/{reportId}/feedback
+POST /api/collections/{collectionId}/feedback
 Authorization: Bearer {firebase_id_token}
 
 Request:
 {
-  "articleIndex": 0,
+  "articleUrl": "https://example.com/article",
   "feedback": "positive"
 }
 
