@@ -16,32 +16,9 @@
 | **コスト意識** | LLM呼び出しを最小限に。バッチ処理で1日1回に集約 |
 | **疎結合** | エージェント間はPub/Sub経由で非同期連携。個別にテスト可能 |
 
-### 1.2 設計判断の記録 (ADR: Architecture Decision Records)
+### 1.2 設計判断の記録 (ADR)
 
-#### ADR-001: バッチ処理 vs リアルタイム処理
-
-- **決定**: 1日1回のバッチ処理を採用
-- **理由**:
-  - リアルタイム処理はLLMコストが膨大になる
-  - ニュースは即時性より正確性が重要
-  - 個人開発の持続可能性を重視
-- **トレードオフ**: 速報性は犠牲になるが、ハッカソン用途では問題なし
-
-#### ADR-002: エージェント間通信方式
-
-- **決定**: Cloud Pub/Sub による非同期メッセージング
-- **却下した案**:
-  - 直接HTTP呼び出し → 障害時の再試行が複雑
-  - Cloud Tasks → Pub/Subで十分
-- **理由**: 疎結合性、自動リトライ、スケーラビリティ
-
-#### ADR-003: Vector Search の選択
-
-- **決定**: Vertex AI Vector Search
-- **却下した案**:
-  - Pinecone → 外部サービス依存を減らしたい
-  - PostgreSQL pgvector → セットアップが煩雑
-- **理由**: GCPエコシステム内で完結
+> 詳細は [ADR.md](./ADR.md) を参照
 
 ---
 
@@ -175,91 +152,9 @@ firestore/
 
 ---
 
-## 4. API設計 (API Design)
+## 4. API設計
 
-### 4.1 内部API（Cloud Run間）
-
-#### Hunter Agent
-
-```
-POST /api/v1/hunt
-Content-Type: application/json
-
-Request:
-{
-  "userId": "user_123",
-  "rssSources": ["https://example.com/rss"]
-}
-
-Response:
-{
-  "status": "success",
-  "articlesFound": 50,
-  "articlesFiltered": 8,
-  "reportId": "report_456"
-}
-```
-
-#### Librarian Agent
-
-```
-POST /api/v1/check-relevance
-Content-Type: application/json
-
-Request:
-{
-  "userId": "user_123",
-  "article": {
-    "title": "...",
-    "content": "..."
-  }
-}
-
-Response:
-{
-  "isRelevant": true,
-  "score": 0.85,
-  "reason": "過去のメモ「AIエージェント設計パターン」と関連",
-  "relatedPages": ["notion_page_id_1", "notion_page_id_2"]
-}
-```
-
-### 4.2 外部API（Dashboard向け）
-
-#### レポート取得
-
-```
-GET /api/reports?date=2025-01-15
-Authorization: Bearer {firebase_id_token}
-
-Response:
-{
-  "report": {
-    "id": "report_456",
-    "date": "2025-01-15",
-    "status": "completed",
-    "articles": [...]
-  }
-}
-```
-
-#### フィードバック送信
-
-```
-POST /api/reports/{reportId}/feedback
-Authorization: Bearer {firebase_id_token}
-
-Request:
-{
-  "articleIndex": 0,
-  "feedback": "positive"
-}
-
-Response:
-{
-  "status": "success"
-}
-```
+> 詳細は [API_design.md](./API_design.md) を参照
 
 ---
 
@@ -398,9 +293,8 @@ GEMINI_FLASH_MODEL=gemini-2.5-flash
 GEMINI_PRO_MODEL=gemini-2.5-pro
 VECTOR_SEARCH_INDEX_ENDPOINT=projects/.../indexes/...
 
-# 外部連携
-NOTION_CLIENT_ID=xxx
-NOTION_CLIENT_SECRET=xxx
+# 外部連携（Notion Internal Integration）
+NOTION_TOKEN=ntn_xxx  # ユーザーが発行したInternal Integration Token
 ```
 
 ---
