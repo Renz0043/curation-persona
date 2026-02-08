@@ -8,7 +8,7 @@
 
 ## 1. 概要
 
-バックエンドは3つのAIエージェントで構成される。各エージェントはCloud Run上で独立したサービスとして動作し、Pub/Subを介して非同期に連携する。
+バックエンドは3つのAIエージェントで構成される。各エージェントはCloud Run上で独立したサービスとして動作し、[A2Aプロトコル](https://a2a-protocol.org/latest/)を介して連携する。
 
 ### 1.1 エージェント一覧
 
@@ -30,10 +30,10 @@
 | カテゴリ | 技術 |
 |----------|------|
 | 言語 | Python 3.11+ |
-| Webフレームワーク | FastAPI |
+| Webフレームワーク | FastAPI + a2a-sdk |
 | LLM SDK | google-genai (Vertex AI) |
 | ベクトル検索 | Vertex AI Vector Search |
-| メッセージング | Cloud Pub/Sub |
+| エージェント間通信 | A2A Protocol (a2a-sdk) |
 | データベース | Cloud Firestore |
 | 外部連携 | Notion API (notion-sdk-py) |
 
@@ -46,18 +46,18 @@
 ```
 Cloud Scheduler (毎朝6時)
     │
-    ▼ Pub/Sub: batch-trigger
+    ▼ HTTP トリガー
 ┌─────────────────────────────────────┐
-│ Collector Agent                     │
+│ Collector Agent (A2A Server)        │
 │  - RSS取得（ソースは厳選済み）       │
 │  - 全記事をFirestoreに保存           │
 │    (scoring_status: PENDING)        │
 └─────────────────────────────────────┘
     │
     │ Firestore: 記事保存
-    ▼ Pub/Sub: score-request
+    ▼ A2A: score_articles
 ┌─────────────────────────────────────┐
-│ Librarian Agent                     │
+│ Librarian Agent (A2A Server)        │
 │  - Firestoreから記事を読み取り       │
 │  - 全記事に関連性スコア付与          │
 │  - Firestoreにスコア書き戻し         │
@@ -67,9 +67,9 @@ Cloud Scheduler (毎朝6時)
 └─────────────────────────────────────┘
     │
     │ Firestore: スコア更新
-    ▼ Pub/Sub: research-request ※ピックアップのみ
+    ▼ A2A: research_article ※ピックアップのみ
 ┌─────────────────────────────────────┐
-│ Researcher Agent                    │
+│ Researcher Agent (A2A Server)       │
 │  - Firestoreからピックアップ記事読取 │
 │  - 詳細レポート生成                  │
 │  - Firestoreに保存                   │
@@ -104,7 +104,7 @@ services/agents/
 │   ├── __init__.py
 │   ├── config.py              # 環境変数・設定
 │   ├── firestore_client.py    # Firestore操作
-│   ├── pubsub_client.py       # Pub/Sub操作
+│   ├── a2a_client.py          # A2A通信クライアント
 │   ├── gemini_client.py       # Gemini API操作
 │   ├── notion_client.py       # Notion API操作
 │   ├── vector_search.py       # Vector Search操作
@@ -119,20 +119,23 @@ services/agents/
 │       └── newsletter_fetcher.py  # メルマガ取得
 │
 ├── collector/                  # Collector Agent
-│   ├── main.py                # FastAPIエントリポイント
+│   ├── main.py                # A2A Server エントリポイント
+│   ├── agent_card.py          # Agent Card 定義
 │   ├── service.py             # ビジネスロジック
 │   ├── Dockerfile
 │   └── requirements.txt
 │
 ├── librarian/                  # Librarian Agent
-│   ├── main.py                # FastAPIエントリポイント
+│   ├── main.py                # A2A Server エントリポイント
+│   ├── agent_card.py          # Agent Card 定義
 │   ├── service.py             # ビジネスロジック
 │   ├── scorer.py              # 関連性スコアリング
 │   ├── Dockerfile
 │   └── requirements.txt
 │
 ├── researcher/                 # Researcher Agent
-│   ├── main.py                # FastAPIエントリポイント
+│   ├── main.py                # A2A Server エントリポイント
+│   ├── agent_card.py          # Agent Card 定義
 │   ├── service.py             # ビジネスロジック
 │   ├── report_generator.py    # レポート生成
 │   ├── Dockerfile
@@ -155,10 +158,9 @@ class Settings(BaseSettings):
     google_cloud_project: str
     firestore_database: str = "(default)"
 
-    # Pub/Sub Topics
-    pubsub_topic_batch: str = "batch-trigger"
-    pubsub_topic_score: str = "score-request"
-    pubsub_topic_research: str = "research-request"
+    # A2A エージェント間通信
+    librarian_agent_url: str  # Librarian Agent の URL
+    researcher_agent_url: str  # Researcher Agent の URL
 
     # Gemini
     gemini_flash_model: str = "gemini-2.5-flash"
@@ -269,20 +271,14 @@ class ArticleCollection(BaseModel):
     status: CollectionStatus
     created_at: datetime
 
-# Pub/Sub メッセージ
-class BatchTriggerMessage(BaseModel):
-    """batch-trigger: Scheduler → Collector"""
-    type: str = "daily_batch"
-    user_id: str
-    triggered_at: datetime
-
-class ScoreRequestMessage(BaseModel):
-    """score-request: Collector → Librarian"""
+# A2A スキルパラメータ
+class ScoreArticlesParams(BaseModel):
+    """score_articles スキル: Collector → Librarian"""
     user_id: str
     collection_id: str
 
-class ResearchRequestMessage(BaseModel):
-    """research-request: Librarian → Researcher"""
+class ResearchArticleParams(BaseModel):
+    """research_article スキル: Librarian → Researcher"""
     user_id: str
     collection_id: str
     article_url: str  # 記事を特定するためのURL
@@ -620,58 +616,69 @@ __all__ = ["fetcher_registry", "FetcherRegistry", "BaseFetcher"]
 - **複数ソース（RSS、Webサイト、メルマガ等）から記事を収集**
 - **FetcherRegistryを使用して拡張可能な取得処理**
 - **Firestoreに全記事を保存**（scoring_status: PENDING）
-- **Pub/Subでスコアリング依頼**（score-request）
+- **A2AでLibrarianにスコアリング依頼**（score_articles スキル）
 
-### 5.2 main.py - エントリポイント
+### 5.2 main.py - A2A Server エントリポイント
 
 ```python
-from fastapi import FastAPI, Request, HTTPException
-from contextlib import asynccontextmanager
-import base64
+from a2a import A2AServer, AgentCard, Skill, Task
+from fastapi import FastAPI
 import logging
 
-from shared.config import settings
-from shared.models import BatchTriggerMessage
+from .agent_card import agent_card
 from .service import CollectorService
 
 logger = logging.getLogger(__name__)
+
+# A2A Server 初期化
+server = A2AServer(agent_card)
+service = CollectorService()
+
+@server.skill("collect_articles")
+async def collect_articles(task: Task) -> Task:
+    """記事収集スキル（Cloud Scheduler からトリガー）"""
+    params = task.message.parts[0].data
+    user_id = params["user_id"]
+
+    logger.info(f"Starting article collection for user: {user_id}")
+
+    result = await service.execute(user_id)
+
+    return task.complete(artifact={
+        "collection_id": result["collection_id"],
+        "articles_total": result["articles_total"]
+    })
+
+# FastAPI アプリとしてマウント
 app = FastAPI(title="Collector Agent")
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # 起動時の初期化処理
-    yield
-    # 終了時のクリーンアップ処理
-
-@app.post("/")
-async def handle_pubsub(request: Request):
-    """Pub/Sub push エンドポイント"""
-    envelope = await request.json()
-
-    if "message" not in envelope:
-        raise HTTPException(status_code=400, detail="Invalid Pub/Sub message")
-
-    pubsub_message = envelope["message"]
-    data = base64.b64decode(pubsub_message["data"]).decode("utf-8")
-    message = BatchTriggerMessage.model_validate_json(data)
-
-    logger.info(f"Received batch trigger for user: {message.user_id}")
-
-    service = CollectorService()
-    result = await service.execute(message.user_id)
-
-    return {"status": "success", "result": result}
-
-@app.post("/api/v1/collect")
-async def collect(user_id: str, rss_sources: list[str]):
-    """手動トリガー用エンドポイント"""
-    service = CollectorService()
-    result = await service.execute(user_id, rss_sources)
-    return result
+app.mount("/", server.app)
 
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+```
+
+### 5.2.1 agent_card.py - Agent Card 定義
+
+```python
+from a2a import AgentCard, Skill
+
+agent_card = AgentCard(
+    name="Collector Agent",
+    description="RSS/Webサイトから記事を収集し、スコアリングを依頼するエージェント",
+    url="https://collector-agent-xxx.run.app",
+    skills=[
+        Skill(
+            id="collect_articles",
+            name="記事収集",
+            description="ユーザーのソース設定に基づいて記事を収集し、Librarianにスコアリングを依頼"
+        )
+    ],
+    capabilities={
+        "streaming": False,
+        "pushNotifications": False
+    }
+)
 ```
 
 ### 5.3 service.py - ビジネスロジック
@@ -683,11 +690,11 @@ import logging
 
 from shared.config import settings
 from shared.firestore_client import FirestoreClient
-from shared.pubsub_client import PubSubClient
+from shared.a2a_client import A2AClient
 from shared.fetchers import fetcher_registry
 from shared.models import (
     ArticleCollection, CollectionStatus, ScoredArticle, ScoringStatus,
-    ScoreRequestMessage, SourceConfig
+    ScoreArticlesParams, SourceConfig
 )
 
 logger = logging.getLogger(__name__)
@@ -695,7 +702,7 @@ logger = logging.getLogger(__name__)
 class CollectorService:
     def __init__(self):
         self.firestore = FirestoreClient()
-        self.pubsub = PubSubClient()
+        self.a2a_client = A2AClient()
         self.fetcher_registry = fetcher_registry
 
     async def execute(self, user_id: str) -> dict:
@@ -734,13 +741,17 @@ class CollectorService:
         await self.firestore.create_collection(collection)
         logger.info(f"Created collection: {collection.id} with {len(scored_articles)} articles")
 
-        # 6. Librarian にスコアリング依頼（Pub/Sub）
-        message = ScoreRequestMessage(
+        # 6. Librarian にスコアリング依頼（A2A）
+        params = ScoreArticlesParams(
             user_id=user_id,
             collection_id=collection.id
         )
-        await self.pubsub.publish(settings.pubsub_topic_score, message)
-        logger.info(f"Published score-request for collection: {collection.id}")
+        await self.a2a_client.send_message(
+            agent_url=settings.librarian_agent_url,
+            skill="score_articles",
+            params=params.model_dump()
+        )
+        logger.info(f"Sent A2A score_articles request for collection: {collection.id}")
 
         return {
             "status": "success",
@@ -798,56 +809,82 @@ class CollectorService:
 
 ### 6.1 責務
 
-- **Pub/Sub（score-request）からトリガー受信**
+- **A2A（score_articles スキル）でCollectorからトリガー受信**
 - **Firestoreから記事を読み取り**
 - 全記事に関連性スコアを付与
 - **Firestoreにスコアを書き戻し**（scoring_status: SCORED）
 - **ピックアップ判定**（上位N件をマーク）
-- **ピックアップ記事をPub/Sub（research-request）で送信**
+- **ピックアップ記事をA2A（research_article スキル）でResearcherに送信**
 - ユーザーのNotionメモをベクトル化して管理
 
-### 6.2 main.py - エントリポイント
+### 6.2 main.py - A2A Server エントリポイント
 
 ```python
-from fastapi import FastAPI, Request, HTTPException
-import base64
+from a2a import A2AServer, Task
+from fastapi import FastAPI
 import logging
 
-from shared.models import ScoreRequestMessage
+from .agent_card import agent_card
 from .service import LibrarianService
 
 logger = logging.getLogger(__name__)
+
+# A2A Server 初期化
+server = A2AServer(agent_card)
+service = LibrarianService()
+
+@server.skill("score_articles")
+async def score_articles(task: Task) -> Task:
+    """記事スコアリングスキル（Collector から呼び出し）"""
+    params = task.message.parts[0].data
+    user_id = params["user_id"]
+    collection_id = params["collection_id"]
+
+    logger.info(f"Starting scoring for collection: {collection_id}")
+
+    await service.score_collection(user_id, collection_id)
+
+    return task.complete(artifact={
+        "collection_id": collection_id,
+        "status": "scored"
+    })
+
+# FastAPI アプリとしてマウント
 app = FastAPI(title="Librarian Agent")
-
-@app.post("/")
-async def handle_pubsub(request: Request):
-    """Pub/Sub push エンドポイント（score-request）"""
-    envelope = await request.json()
-
-    if "message" not in envelope:
-        raise HTTPException(status_code=400, detail="Invalid Pub/Sub message")
-
-    pubsub_message = envelope["message"]
-    data = base64.b64decode(pubsub_message["data"]).decode("utf-8")
-    message = ScoreRequestMessage.model_validate_json(data)
-
-    logger.info(f"Received score request for collection: {message.collection_id}")
-
-    service = LibrarianService()
-    await service.score_collection(message.user_id, message.collection_id)
-
-    return {"status": "success"}
+app.mount("/", server.app)
 
 @app.post("/api/v1/sync-embeddings")
 async def sync_embeddings(user_id: str):
     """Notionメモのembeddingを同期"""
-    service = LibrarianService()
     await service.sync_notion_embeddings(user_id)
     return {"status": "success"}
 
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+```
+
+### 6.2.1 agent_card.py - Agent Card 定義
+
+```python
+from a2a import AgentCard, Skill
+
+agent_card = AgentCard(
+    name="Librarian Agent",
+    description="記事にユーザーコンテキストとの関連性スコアを付与するエージェント",
+    url="https://librarian-agent-xxx.run.app",
+    skills=[
+        Skill(
+            id="score_articles",
+            name="記事スコアリング",
+            description="コレクション内の全記事にNotionメモとの関連性スコアを付与"
+        )
+    ],
+    capabilities={
+        "streaming": False,
+        "pushNotifications": False
+    }
+)
 ```
 
 ### 6.3 service.py - ビジネスロジック
@@ -861,9 +898,9 @@ from shared.notion_client import NotionClient
 from shared.vector_search import VectorSearchClient
 from shared.gemini_client import GeminiClient
 from shared.firestore_client import FirestoreClient
-from shared.pubsub_client import PubSubClient
+from shared.a2a_client import A2AClient
 from shared.models import (
-    ScoredArticle, ScoringStatus, ResearchStatus, ResearchRequestMessage
+    ScoredArticle, ScoringStatus, ResearchStatus, ResearchArticleParams
 )
 
 logger = logging.getLogger(__name__)
@@ -874,7 +911,7 @@ class LibrarianService:
         self.vector_search = VectorSearchClient()
         self.gemini = GeminiClient(model="flash")
         self.firestore = FirestoreClient()
-        self.pubsub = PubSubClient()
+        self.a2a_client = A2AClient()
 
     async def score_collection(self, user_id: str, collection_id: str):
         """コレクション内の全記事にスコアを付与"""
@@ -912,16 +949,20 @@ class LibrarianService:
         await self.firestore.update_collection_articles(collection_id, collection.articles)
         logger.info(f"Updated scores for collection: {collection_id}")
 
-        # 6. ピックアップ記事をResearcherに送信
+        # 6. ピックアップ記事をResearcherにA2Aで送信
         pickup_articles = [a for a in collection.articles if a.is_pickup]
         for article in pickup_articles:
-            message = ResearchRequestMessage(
+            params = ResearchArticleParams(
                 user_id=user_id,
                 collection_id=collection_id,
                 article_url=article.url
             )
-            await self.pubsub.publish(settings.pubsub_topic_research, message)
-            logger.info(f"Published research-request for: {article.title}")
+            await self.a2a_client.send_message(
+                agent_url=settings.researcher_agent_url,
+                skill="research_article",
+                params=params.model_dump()
+            )
+            logger.info(f"Sent A2A research_article request for: {article.title}")
 
     async def _score_single(
         self,
@@ -1040,47 +1081,74 @@ class ArticleScorer:
 
 ### 7.1 責務
 
-- **Pub/Sub（research-request）からトリガー受信**
+- **A2A（research_article スキル）でLibrarianからトリガー受信**
 - **Firestoreからピックアップ記事を読み取り**
 - Gemini Pro による深掘りレポート生成
 - **Firestoreにレポート保存**（research_status: COMPLETED）
 - 全ピックアップ完了時にレポートステータスを更新
 
-### 7.2 main.py - エントリポイント
+### 7.2 main.py - A2A Server エントリポイント
 
 ```python
-from fastapi import FastAPI, Request, HTTPException
-import base64
+from a2a import A2AServer, Task
+from fastapi import FastAPI
 import logging
 
-from shared.models import ResearchRequestMessage
+from .agent_card import agent_card
 from .service import ResearcherService
+from shared.models import ResearchArticleParams
 
 logger = logging.getLogger(__name__)
+
+# A2A Server 初期化
+server = A2AServer(agent_card)
+service = ResearcherService()
+
+@server.skill("research_article")
+async def research_article(task: Task) -> Task:
+    """記事詳細調査スキル（Librarian から呼び出し）"""
+    params = task.message.parts[0].data
+    research_params = ResearchArticleParams(**params)
+
+    logger.info(f"Starting research for article: {research_params.article_url}")
+
+    await service.research(research_params)
+
+    return task.complete(artifact={
+        "article_url": research_params.article_url,
+        "status": "completed"
+    })
+
+# FastAPI アプリとしてマウント
 app = FastAPI(title="Researcher Agent")
-
-@app.post("/")
-async def handle_pubsub(request: Request):
-    """Pub/Sub push エンドポイント（research-request）"""
-    envelope = await request.json()
-
-    if "message" not in envelope:
-        raise HTTPException(status_code=400, detail="Invalid Pub/Sub message")
-
-    pubsub_message = envelope["message"]
-    data = base64.b64decode(pubsub_message["data"]).decode("utf-8")
-    message = ResearchRequestMessage.model_validate_json(data)
-
-    logger.info(f"Received research request for article: {message.article_url}")
-
-    service = ResearcherService()
-    await service.research(message)
-
-    return {"status": "success"}
+app.mount("/", server.app)
 
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+```
+
+### 7.2.1 agent_card.py - Agent Card 定義
+
+```python
+from a2a import AgentCard, Skill
+
+agent_card = AgentCard(
+    name="Researcher Agent",
+    description="ピックアップ記事の詳細調査レポートを生成するエージェント",
+    url="https://researcher-agent-xxx.run.app",
+    skills=[
+        Skill(
+            id="research_article",
+            name="記事詳細調査",
+            description="記事の深掘りレポートをGemini Proで生成"
+        )
+    ],
+    capabilities={
+        "streaming": False,
+        "pushNotifications": False
+    }
+)
 ```
 
 ### 7.3 service.py - ビジネスロジック
@@ -1089,7 +1157,7 @@ async def health():
 import logging
 
 from shared.firestore_client import FirestoreClient
-from shared.models import ResearchRequestMessage, CollectionStatus, ResearchStatus
+from shared.models import ResearchArticleParams, CollectionStatus, ResearchStatus
 from .report_generator import ReportGenerator
 
 logger = logging.getLogger(__name__)
@@ -1099,24 +1167,24 @@ class ResearcherService:
         self.firestore = FirestoreClient()
         self.generator = ReportGenerator()
 
-    async def research(self, message: ResearchRequestMessage):
+    async def research(self, params: ResearchArticleParams):
         """ピックアップ記事の詳細調査を実行"""
 
         # 1. Firestoreからコレクションと対象記事を取得
-        collection = await self.firestore.get_collection(message.collection_id)
+        collection = await self.firestore.get_collection(params.collection_id)
         article = next(
-            (a for a in collection.articles if a.url == message.article_url),
+            (a for a in collection.articles if a.url == params.article_url),
             None
         )
 
         if not article:
-            logger.error(f"Article not found: {message.article_url}")
+            logger.error(f"Article not found: {params.article_url}")
             return
 
         # 2. research_status を RESEARCHING に更新
         await self.firestore.update_article_research_status(
-            collection_id=message.collection_id,
-            article_url=message.article_url,
+            collection_id=params.collection_id,
+            article_url=params.article_url,
             research_status=ResearchStatus.RESEARCHING
         )
 
@@ -1128,15 +1196,15 @@ class ResearcherService:
 
         # 4. 記事を更新（research_status: COMPLETED）
         await self.firestore.update_article_research(
-            collection_id=message.collection_id,
-            article_url=message.article_url,
+            collection_id=params.collection_id,
+            article_url=params.article_url,
             deep_dive_report=deep_dive_report,
             research_status=ResearchStatus.COMPLETED
         )
         logger.info(f"Research completed for: {article.title}")
 
         # 5. 全ピックアップ記事の処理完了か確認
-        collection = await self.firestore.get_collection(message.collection_id)
+        collection = await self.firestore.get_collection(params.collection_id)
         pickup_articles = [a for a in collection.articles if a.is_pickup]
         all_completed = all(
             a.research_status == ResearchStatus.COMPLETED
@@ -1145,10 +1213,10 @@ class ResearcherService:
 
         if all_completed:
             await self.firestore.update_collection_status(
-                message.collection_id,
+                params.collection_id,
                 CollectionStatus.COMPLETED
             )
-            logger.info(f"Collection completed: {message.collection_id}")
+            logger.info(f"Collection completed: {params.collection_id}")
 ```
 
 ### 7.4 report_generator.py - レポート生成
@@ -1274,7 +1342,52 @@ class GeminiClient:
         return response.embeddings[0].values
 ```
 
-### 8.2 firestore_client.py
+### 8.2 a2a_client.py
+
+```python
+from a2a import A2AClient as BaseA2AClient, Message, Part
+import logging
+
+logger = logging.getLogger(__name__)
+
+class A2AClient:
+    """A2Aプロトコルでエージェント間通信を行うクライアント"""
+
+    async def send_message(
+        self,
+        agent_url: str,
+        skill: str,
+        params: dict
+    ) -> dict:
+        """
+        他のエージェントにA2Aメッセージを送信
+
+        Args:
+            agent_url: 送信先エージェントのURL
+            skill: 実行するスキル名
+            params: スキルに渡すパラメータ
+
+        Returns:
+            Task の完了結果
+        """
+        client = BaseA2AClient(agent_url)
+
+        message = Message(
+            role="user",
+            parts=[Part(type="data", data={"skill": skill, **params})]
+        )
+
+        task = await client.send_message(message)
+
+        logger.info(f"A2A message sent to {agent_url}, task_id: {task.id}")
+
+        # タスク完了を待機（同期的に処理）
+        completed_task = await client.wait_for_completion(task.id)
+
+        return completed_task.artifact
+```
+
+### 8.3 firestore_client.py
 
 ```python
 from google.cloud import firestore
@@ -1500,29 +1613,37 @@ gcloud run deploy researcher-agent \
   --set-env-vars "GOOGLE_CLOUD_PROJECT=curation-persona"
 ```
 
-### 9.3 Pub/Sub トピック・サブスクリプション設定
+### 9.3 Cloud Scheduler 設定（A2A トリガー）
 
 ```bash
-# トピック作成
-gcloud pubsub topics create batch-trigger
-gcloud pubsub topics create score-request
-gcloud pubsub topics create research-request
-
-# batch-trigger → Collector Agent
-gcloud pubsub subscriptions create batch-trigger-sub \
-  --topic batch-trigger \
-  --push-endpoint https://collector-agent-xxx.run.app
-
-# score-request → Librarian Agent
-gcloud pubsub subscriptions create score-request-sub \
-  --topic score-request \
-  --push-endpoint https://librarian-agent-xxx.run.app
-
-# research-request → Researcher Agent
-gcloud pubsub subscriptions create research-request-sub \
-  --topic research-request \
-  --push-endpoint https://researcher-agent-xxx.run.app
+# 毎朝6時にCollector Agentをトリガー
+gcloud scheduler jobs create http collect-daily \
+  --location asia-northeast1 \
+  --schedule "0 6 * * *" \
+  --time-zone "Asia/Tokyo" \
+  --uri "https://collector-agent-xxx.run.app/a2a" \
+  --http-method POST \
+  --headers "Content-Type=application/json" \
+  --message-body '{
+    "jsonrpc": "2.0",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "parts": [{
+          "type": "data",
+          "data": {
+            "skill": "collect_articles",
+            "user_id": "user_123"
+          }
+        }]
+      }
+    },
+    "id": "scheduler-trigger"
+  }'
 ```
+
+> **Note**: エージェント間通信はA2Aプロトコル（HTTP直接通信）で行うため、Pub/Subは不要。
 
 ---
 

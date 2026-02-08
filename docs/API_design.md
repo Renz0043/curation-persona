@@ -25,16 +25,16 @@ Response:
 }
 ```
 
-> 通常はPub/Sub（batch-trigger）経由でトリガーされる。
-> 手動トリガー後、スコアリング・詳細調査は非同期で実行される。
+> 通常はCloud Scheduler経由でHTTPトリガーされる。
+> 手動トリガー後、スコアリング・詳細調査はA2A経由で連携実行される。
 
 ### Librarian Agent
 
-> Pub/Sub（score-request）経由でトリガーされる。外部APIなし。
+> A2A（score_articles スキル）経由でCollectorからトリガーされる。外部APIなし。
 
 ### Researcher Agent
 
-> Pub/Sub（research-request）経由でトリガーされる。外部APIなし。
+> A2A（research_article スキル）経由でLibrarianからトリガーされる。外部APIなし。
 
 ---
 

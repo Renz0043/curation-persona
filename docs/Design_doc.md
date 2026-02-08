@@ -14,7 +14,7 @@
 |------|------|
 | **シンプルさ優先** | ハッカソン期間内に動くものを作る。過度な抽象化は避ける |
 | **コスト意識** | LLM呼び出しを最小限に。バッチ処理で1日1回に集約 |
-| **疎結合** | エージェント間はPub/Sub経由で非同期連携。個別にテスト可能 |
+| **標準プロトコル** | エージェント間は A2A プロトコルで連携。相互運用性を確保 |
 
 ### 1.2 設計判断の記録 (ADR)
 
@@ -33,18 +33,14 @@ graph TD
         LineBot[LINE Bot<br/>手動トリガー]
     end
 
-    subgraph "Message Queue"
-        PubSub[Cloud Pub/Sub]
-    end
-
-    subgraph "Agent Layer (Cloud Run)"
+    subgraph "Agent Layer (Cloud Run + A2A)"
         Collector[Collector Agent<br/>Gemini 2.5 Flash]
         Librarian[Librarian Agent<br/>Vector Search]
         Researcher[Researcher Agent<br/>Gemini 2.5 Pro]
     end
 
     subgraph "Data Layer"
-        Firestore[(Firestore<br/>Reports / Users)]
+        Firestore[(Firestore<br/>Collections / Users)]
         VectorDB[(Vector Search<br/>Notion Embeddings)]
     end
 
@@ -57,15 +53,16 @@ graph TD
         Dashboard[Next.js Dashboard<br/>Firebase Hosting]
     end
 
-    Scheduler --> PubSub
-    LineBot -.-> PubSub
+    Scheduler -->|HTTP| Collector
+    LineBot -.->|HTTP| Collector
 
-    PubSub --> Collector
+    Collector -->|A2A| Librarian
     Collector --> RSS
-    Collector --> Librarian
+    Collector --> Firestore
+    Librarian -->|A2A| Researcher
     Librarian --> VectorDB
     Librarian --> Notion
-    Collector --> Researcher
+    Librarian --> Firestore
     Researcher --> Firestore
 
     Dashboard --> Firestore
@@ -142,31 +139,72 @@ firestore/
     └── updatedAt: timestamp
 ```
 
-### 3.2 Pub/Sub メッセージ形式
+### 3.2 A2A メッセージ形式
 
-#### Topic: `batch-trigger`（Scheduler → Collector）
+> エージェント間通信は [A2A プロトコル](https://a2a-protocol.org/latest/) に準拠
+
+#### Collector → Librarian（score_articles スキル呼び出し）
 ```json
 {
-  "type": "daily_batch",
-  "userId": "user_123",
-  "triggeredAt": "2025-01-15T06:00:00+09:00"
+  "jsonrpc": "2.0",
+  "method": "message/send",
+  "params": {
+    "message": {
+      "role": "user",
+      "parts": [{
+        "type": "data",
+        "data": {
+          "skill": "score_articles",
+          "userId": "user_123",
+          "collectionId": "collection_user_123_20250115"
+        }
+      }]
+    }
+  },
+  "id": "req_001"
 }
 ```
 
-#### Topic: `score-request`（Collector → Librarian）
+#### Librarian → Researcher（research_article スキル呼び出し）
 ```json
 {
-  "userId": "user_123",
-  "collectionId": "collection_user_123_20250115"
+  "jsonrpc": "2.0",
+  "method": "message/send",
+  "params": {
+    "message": {
+      "role": "user",
+      "parts": [{
+        "type": "data",
+        "data": {
+          "skill": "research_article",
+          "userId": "user_123",
+          "collectionId": "collection_user_123_20250115",
+          "articleUrl": "https://example.com/article"
+        }
+      }]
+    }
+  },
+  "id": "req_002"
 }
 ```
 
-#### Topic: `research-request`（Librarian → Researcher）
+#### Agent Card 例（Collector Agent）
 ```json
 {
-  "userId": "user_123",
-  "collectionId": "collection_user_123_20250115",
-  "articleUrl": "https://example.com/article"
+  "name": "Collector Agent",
+  "description": "RSS記事を収集しスコアリングを依頼するエージェント",
+  "url": "https://collector-agent-xxx.run.app",
+  "skills": [
+    {
+      "id": "collect_articles",
+      "name": "記事収集",
+      "description": "ユーザーのRSSソースから記事を収集"
+    }
+  ],
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  }
 }
 ```
 
@@ -186,7 +224,6 @@ firestore/
 sequenceDiagram
     autonumber
     participant Scheduler as Cloud Scheduler
-    participant PubSub as Pub/Sub
     participant Collector as Collector Agent
     participant DB as Firestore
     participant Librarian as Librarian Agent
@@ -194,15 +231,13 @@ sequenceDiagram
     participant Researcher as Researcher Agent
 
     Note over Scheduler: 毎朝 06:00 JST
-    Scheduler->>PubSub: batch-trigger
-    PubSub->>Collector: トリガー受信
+    Scheduler->>Collector: HTTP トリガー
 
     Collector->>Collector: RSS巡回（並列）
     Note right of Collector: 全記事を収集
     Collector->>DB: 記事保存 (scoring_status: PENDING)
-    Collector->>PubSub: score-request
+    Collector->>Librarian: A2A: score_articles
 
-    PubSub->>Librarian: スコアリング依頼
     Librarian->>DB: 記事読み取り
     Librarian->>Vector: 各記事のベクトル検索
     Vector-->>Librarian: 類似Notionページ + スコア
@@ -210,14 +245,15 @@ sequenceDiagram
     Note right of Librarian: 上位N件をピックアップ
 
     loop ピックアップ記事のみ
-        Librarian->>PubSub: research-request
-        PubSub->>Researcher: 詳細調査依頼
+        Librarian->>Researcher: A2A: research_article
         Researcher->>DB: 記事読み取り
         Researcher->>Researcher: Gemini Pro で深掘り
         Researcher->>DB: レポート保存 (research_status: COMPLETED)
+        Researcher-->>Librarian: Task completed
     end
 
-    Researcher->>DB: status: completed
+    Librarian-->>Collector: Task completed
+    Collector->>DB: status: completed
 ```
 
 ---
@@ -276,7 +312,7 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    match /reports/{reportId} {
+    match /collections/{collectionId} {
       allow read: if request.auth != null &&
                      resource.data.userId == request.auth.uid;
       allow write: if false; // バックエンドのみ書き込み可
@@ -304,8 +340,10 @@ service cloud.firestore {
 # Cloud Run 共通
 GOOGLE_CLOUD_PROJECT=curation-persona
 FIRESTORE_DATABASE=(default)
-PUBSUB_TOPIC_BATCH=batch-trigger
-PUBSUB_TOPIC_RESEARCH=research-request
+
+# A2A エージェント間通信
+LIBRARIAN_AGENT_URL=https://librarian-agent-xxx.run.app
+RESEARCHER_AGENT_URL=https://researcher-agent-xxx.run.app
 
 # エージェント固有
 GEMINI_FLASH_MODEL=gemini-2.5-flash
@@ -325,7 +363,7 @@ NOTION_TOKEN=ntn_xxx  # ユーザーが発行したInternal Integration Token
 | メトリクス | 確認場所 | アラート閾値 |
 |------------|----------|--------------|
 | Cloud Run エラー率 | Cloud Console | 手動確認 |
-| Pub/Sub 未処理メッセージ | Cloud Console | 手動確認 |
+| A2A 通信レイテンシ | Cloud Logging | 手動確認 |
 | LLM API コスト | GCP Billing | $10/日 超えたら停止 |
 
 ### 9.2 ログ出力
