@@ -34,7 +34,7 @@ Response:
 
 ### Researcher Agent
 
-> A2A（research_article スキル）経由でLibrarianからトリガーされる。外部APIなし。
+> A2A（research_article スキル）経由でDashboard APIからトリガーされる（ユーザー手動リクエスト）。
 
 ---
 
@@ -57,7 +57,7 @@ Response:
 }
 ```
 
-### フィードバック送信
+### フィードバック送信（5段階評価 + コメント）
 
 ```
 POST /api/collections/{collectionId}/feedback
@@ -66,7 +66,8 @@ Authorization: Bearer {firebase_id_token}
 Request:
 {
   "articleUrl": "https://example.com/article",
-  "feedback": "positive"
+  "rating": 5,
+  "comment": "AIエージェント設計に関連していて非常に参考になった"
 }
 
 Response:
@@ -74,3 +75,26 @@ Response:
   "status": "success"
 }
 ```
+
+> `rating` は 1-5 の整数（必須）。`comment` は任意。
+
+### 深掘りリクエスト
+
+```
+POST /api/collections/{collectionId}/research
+Authorization: Bearer {firebase_id_token}
+
+Request:
+{
+  "articleUrl": "https://example.com/article"
+}
+
+Response:
+{
+  "status": "accepted",
+  "message": "深掘りレポートを生成中です"
+}
+```
+
+> Dashboard APIがResearcher AgentにA2A経由で `research_article` スキルを呼び出す。
+> レポート生成は非同期で行われ、完了時にFirestoreのarticle内の `deepDiveReport` が更新される。

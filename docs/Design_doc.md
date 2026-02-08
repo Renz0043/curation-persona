@@ -35,18 +35,16 @@ graph TD
 
     subgraph "Agent Layer (Cloud Run + A2A)"
         Collector[Collector Agent<br/>Gemini 2.5 Flash]
-        Librarian[Librarian Agent<br/>Vector Search]
+        Librarian[Librarian Agent<br/>LLM Scoring]
         Researcher[Researcher Agent<br/>Gemini 2.5 Pro]
     end
 
     subgraph "Data Layer"
         Firestore[(Firestore<br/>Collections / Users)]
-        VectorDB[(Vector Search<br/>Notion Embeddings)]
     end
 
     subgraph "External"
         RSS[RSS Feeds]
-        Notion[Notion API]
     end
 
     subgraph "Frontend"
@@ -59,10 +57,8 @@ graph TD
     Collector -->|A2A| Librarian
     Collector --> RSS
     Collector --> Firestore
-    Librarian -->|A2A| Researcher
-    Librarian --> VectorDB
-    Librarian --> Notion
     Librarian --> Firestore
+    Dashboard -->|API: 深掘りリクエスト| Researcher
     Researcher --> Firestore
 
     Dashboard --> Firestore
@@ -73,9 +69,9 @@ graph TD
 | コンポーネント | 責務 | 技術 |
 |----------------|------|------|
 | **Collector Agent** | RSS巡回、初期フィルタリング、エージェント連携の起点 | Cloud Run, Python, Gemini Flash |
-| **Librarian Agent** | ユーザーコンテキストとの関連性判定 | Cloud Run, Python, Vector Search |
+| **Librarian Agent** | ユーザー評価ベースのLLMスコアリング | Cloud Run, Python, Gemini Flash |
 | **Researcher Agent** | 詳細レポート生成、Firestore保存 | Cloud Run, Python, Gemini Pro |
-| **Dashboard** | レポート表示、ユーザー認証、フィードバック収集 | Next.js, Firebase Auth |
+| **Dashboard** | レポート表示、ユーザー認証、評価・深掘りリクエスト | Next.js, Firebase Auth |
 
 ---
 
@@ -86,8 +82,6 @@ graph TD
 ```
 firestore/
 ├── users/{userId}
-│   ├── notionAccessToken: string (encrypted)
-│   ├── notionWorkspaceId: string
 │   ├── sources: [                    // 記事ソース設定（拡張可能）
 │   │     {
 │   │       id: string                // "src_001"
@@ -106,37 +100,29 @@ firestore/
 │   │   }
 │   └── createdAt: timestamp
 │
-├── collections/{collectionId}        // 日次の記事コレクション
-│   ├── userId: string
-│   ├── date: string                  // "2025-01-15"
-│   ├── articles: [
-│   │     {
-│   │       title: string
-│   │       url: string
-│   │       source: string
-│   │       sourceType: "rss" | "website" | "newsletter" | "api"
-│   │       content: string
-│   │       publishedAt: timestamp
-│   │       scoringStatus: "pending" | "scoring" | "scored"
-│   │       relevanceScore: number    // 0.0 - 1.0
-│   │       relevanceReason: string
-│   │       relatedNotionPages: string[]
-│   │       isPickup: boolean
-│   │       researchStatus: "pending" | "researching" | "completed" | null
-│   │       deepDiveReport: string | null
-│   │       userFeedback: "positive" | "neutral" | "negative" | null
-│   │     }
-│   │   ]
-│   ├── status: "collecting" | "scoring" | "researching" | "completed" | "failed"
-│   └── createdAt: timestamp
-│
-└── notionEmbeddings/{embeddingId}
+└── collections/{collectionId}        // 日次の記事コレクション
     ├── userId: string
-    ├── notionPageId: string
-    ├── notionPageTitle: string
-    ├── content: string               // 元テキスト（デバッグ用）
-    ├── embeddingVector: number[]     // Vector Search側で管理
-    └── updatedAt: timestamp
+    ├── date: string                  // "2025-01-15"
+    ├── articles: [
+    │     {
+    │       title: string
+    │       url: string
+    │       source: string
+    │       sourceType: "rss" | "website" | "newsletter" | "api"
+    │       content: string
+    │       publishedAt: timestamp
+    │       scoringStatus: "pending" | "scoring" | "scored"
+    │       relevanceScore: number    // 0.0 - 1.0
+    │       relevanceReason: string   // 過去の高評価記事との関連理由
+    │       isPickup: boolean
+    │       researchStatus: "pending" | "researching" | "completed" | null
+    │       deepDiveReport: string | null
+    │       userRating: number | null // 1-5 の5段階評価
+    │       userComment: string | null // ユーザーコメント
+    │     }
+    │   ]
+    ├── status: "collecting" | "scoring" | "researching" | "completed" | "failed"
+    └── createdAt: timestamp
 ```
 
 ### 3.2 A2A メッセージ形式
@@ -165,7 +151,10 @@ firestore/
 }
 ```
 
-#### Librarian → Researcher（research_article スキル呼び出し）
+#### Dashboard API → Researcher（research_article スキル呼び出し / 手動トリガー）
+
+> ユーザーがDashboardから「深掘りリクエスト」を送信すると、Dashboard APIがResearcher AgentにA2Aメッセージを送信する。
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -227,7 +216,8 @@ sequenceDiagram
     participant Collector as Collector Agent
     participant DB as Firestore
     participant Librarian as Librarian Agent
-    participant Vector as Vector Search
+    participant Dashboard as Dashboard
+    participant User as ユーザー
     participant Researcher as Researcher Agent
 
     Note over Scheduler: 毎朝 06:00 JST
@@ -238,22 +228,28 @@ sequenceDiagram
     Collector->>DB: 記事保存 (scoring_status: PENDING)
     Collector->>Librarian: A2A: score_articles
 
-    Librarian->>DB: 記事読み取り
-    Librarian->>Vector: 各記事のベクトル検索
-    Vector-->>Librarian: 類似Notionページ + スコア
+    Librarian->>DB: 過去の高評価記事（4-5★）取得
+    Librarian->>Librarian: Gemini Flash で興味プロファイル生成
+    Librarian->>DB: 新記事読み取り
+    Librarian->>Librarian: Gemini Flash でスコアリング
+    Note right of Librarian: プロファイルに基づき各記事をスコアリング
     Librarian->>DB: スコア書き戻し (scoring_status: SCORED)
-    Note right of Librarian: 上位N件をピックアップ
-
-    loop ピックアップ記事のみ
-        Librarian->>Researcher: A2A: research_article
-        Researcher->>DB: 記事読み取り
-        Researcher->>Researcher: Gemini Pro で深掘り
-        Researcher->>DB: レポート保存 (research_status: COMPLETED)
-        Researcher-->>Librarian: Task completed
-    end
+    Note right of Librarian: 上位N件をピックアップとしてマーク
 
     Librarian-->>Collector: Task completed
     Collector->>DB: status: completed
+
+    Note over User: ユーザーが記事を閲覧・評価
+    User->>Dashboard: 5段階評価 + コメント
+    Dashboard->>DB: 評価データ保存
+
+    Note over User: ユーザーが深掘りをリクエスト
+    User->>Dashboard: 深掘りリクエスト
+    Dashboard->>Researcher: A2A: research_article
+    Researcher->>DB: 記事 + 過去の高評価記事読み取り
+    Researcher->>Researcher: Gemini Pro で深掘り
+    Researcher->>DB: レポート保存 (research_status: COMPLETED)
+    Researcher-->>Dashboard: Task completed
 ```
 
 ---
@@ -266,8 +262,8 @@ sequenceDiagram
 |------------|------|
 | RSS取得失敗 | スキップして次のソースへ。ログ記録のみ |
 | LLM API エラー | 最大3回リトライ（exponential backoff） |
-| Vector Search エラー | 関連性スコア0として処理継続 |
-| Notion API エラー | キャッシュがあれば使用、なければスキップ |
+| LLMスコアリングエラー | 関連性スコア0として処理継続 |
+| 評価データ不足（コールドスタート） | スコア0.5固定、全記事を時系列表示 |
 
 ### 6.2 リトライ設定
 
@@ -348,10 +344,6 @@ RESEARCHER_AGENT_URL=https://researcher-agent-xxx.run.app
 # エージェント固有
 GEMINI_FLASH_MODEL=gemini-2.5-flash
 GEMINI_PRO_MODEL=gemini-2.5-pro
-VECTOR_SEARCH_INDEX_ENDPOINT=projects/.../indexes/...
-
-# 外部連携（Notion Internal Integration）
-NOTION_TOKEN=ntn_xxx  # ユーザーが発行したInternal Integration Token
 ```
 
 ---
@@ -389,8 +381,8 @@ logger.info("Article processed", extra={
 > ハッカソン後に本番運用する場合の検討事項
 
 - [ ] マルチテナント対応（ユーザー増加時のスケーリング）
-- [ ] Notion OAuth の本番申請
-- [ ] セキュリティ監査（Notion トークンの暗号化強化）
+- [ ] MCPサーバー経由での評価・コメントDB公開（ADR-012）
+- [ ] Vector Searchによるハイブリッドスコアリング再導入（ADR-003）
 - [ ] CI/CD パイプライン構築
 - [ ] 負荷テスト実施
 - [ ] SLA定義とモニタリング強化

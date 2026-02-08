@@ -15,8 +15,8 @@
 | エージェント | 役割 | LLMモデル |
 |-------------|------|-----------|
 | Collector Agent | RSS巡回、記事収集、フロー制御 | - |
-| Librarian Agent | 全記事への関連性スコア付与、ピックアップ選定 | Gemini 2.5 Flash (embedding) |
-| Researcher Agent | ピックアップ記事の詳細レポート生成 | Gemini 2.5 Pro |
+| Librarian Agent | 全記事への関連性スコア付与、ピックアップ選定 | Gemini 2.5 Flash (LLMスコアリング) |
+| Researcher Agent | ユーザーリクエストによる詳細レポート生成 | Gemini 2.5 Pro |
 
 ### 1.2 設計方針
 
@@ -32,10 +32,8 @@
 | 言語 | Python 3.11+ |
 | Webフレームワーク | FastAPI + a2a-sdk |
 | LLM SDK | google-genai (Vertex AI) |
-| ベクトル検索 | Vertex AI Vector Search |
 | エージェント間通信 | A2A Protocol (a2a-sdk) |
 | データベース | Cloud Firestore |
-| 外部連携 | Notion API (notion-sdk-py) |
 
 ---
 
@@ -58,8 +56,9 @@ Cloud Scheduler (毎朝6時)
     ▼ A2A: score_articles
 ┌─────────────────────────────────────┐
 │ Librarian Agent (A2A Server)        │
-│  - Firestoreから記事を読み取り       │
-│  - 全記事に関連性スコア付与          │
+│  - 過去の高評価記事（4-5★）を取得    │
+│  - Gemini Flashで興味プロファイル生成 │
+│  - 全記事にLLMベーススコア付与       │
 │  - Firestoreにスコア書き戻し         │
 │    (scoring_status: SCORED)         │
 │  - 上位N件をピックアップとしてマーク  │
@@ -67,10 +66,18 @@ Cloud Scheduler (毎朝6時)
 └─────────────────────────────────────┘
     │
     │ Firestore: スコア更新
-    ▼ A2A: research_article ※ピックアップのみ
+    ▼ バッチ処理完了
+
+┌─────────────────────────────────────┐
+│ Dashboard API（ユーザー手動トリガー） │
+│  - ユーザーが「深掘りリクエスト」送信 │
+└─────────────────────────────────────┘
+    │
+    ▼ A2A: research_article
 ┌─────────────────────────────────────┐
 │ Researcher Agent (A2A Server)       │
-│  - Firestoreからピックアップ記事読取 │
+│  - Firestoreから対象記事読み取り     │
+│  - 過去の高評価記事のコンテキスト取得│
 │  - 詳細レポート生成                  │
 │  - Firestoreに保存                   │
 │    (research_status: COMPLETED)     │
@@ -106,8 +113,6 @@ services/agents/
 │   ├── firestore_client.py    # Firestore操作
 │   ├── a2a_client.py          # A2A通信クライアント
 │   ├── gemini_client.py       # Gemini API操作
-│   ├── notion_client.py       # Notion API操作
-│   ├── vector_search.py       # Vector Search操作
 │   ├── models.py              # Pydanticモデル定義
 │   ├── retry.py               # リトライユーティリティ
 │   └── fetchers/              # 記事取得モジュール（拡張可能）
@@ -166,15 +171,12 @@ class Settings(BaseSettings):
     gemini_flash_model: str = "gemini-2.5-flash"
     gemini_pro_model: str = "gemini-2.5-pro"
 
-    # Vector Search
-    vector_search_index_endpoint: str
-    vector_search_deployed_index_id: str
-
-    # Notion
-    notion_token: str
-
     # ピックアップ設定
-    pickup_count: int = 2  # 詳細レポートを生成する記事数
+    pickup_count: int = 2  # ピックアップとしてマークする記事数
+
+    # スコアリング設定
+    min_ratings_for_scoring: int = 3  # スコアリングに必要な最低評価数
+    high_rating_threshold: int = 4     # 高評価とみなす最低評価値（4-5★）
 
     class Config:
         env_file = ".env"
@@ -185,15 +187,10 @@ settings = Settings()
 ### 4.2 models.py - 共通データモデル
 
 ```python
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 from enum import Enum
-
-class FeedbackType(str, Enum):
-    POSITIVE = "positive"
-    NEUTRAL = "neutral"
-    NEGATIVE = "negative"
 
 class CollectionStatus(str, Enum):
     """記事コレクションのステータス"""
@@ -251,16 +248,16 @@ class ScoredArticle(Article):
     # スコアリング関連（全記事共通）
     scoring_status: ScoringStatus = ScoringStatus.PENDING
     relevance_score: float = 0.0  # 0.0 - 1.0
-    relevance_reason: str = ""
-    related_notion_pages: list[str] = []
+    relevance_reason: str = ""    # 過去の高評価記事との関連理由
 
     # ピックアップ関連（ピックアップ記事のみ使用）
     is_pickup: bool = False
     research_status: Optional[ResearchStatus] = None  # ピックアップ時のみ設定
     deep_dive_report: Optional[str] = None
 
-    # フィードバック
-    user_feedback: Optional[FeedbackType] = None
+    # ユーザー評価
+    user_rating: Optional[int] = Field(None, ge=1, le=5)  # 1-5 の5段階評価
+    user_comment: Optional[str] = None
 
 class ArticleCollection(BaseModel):
     """日次の記事コレクション（収集した記事の集合）"""
@@ -811,11 +808,11 @@ class CollectorService:
 
 - **A2A（score_articles スキル）でCollectorからトリガー受信**
 - **Firestoreから記事を読み取り**
-- 全記事に関連性スコアを付与
+- **過去の高評価記事（4-5★）からユーザー興味プロファイルを生成**
+- **全記事にLLMベーススコアを付与**（Gemini Flash）
 - **Firestoreにスコアを書き戻し**（scoring_status: SCORED）
 - **ピックアップ判定**（上位N件をマーク）
-- **ピックアップ記事をA2A（research_article スキル）でResearcherに送信**
-- ユーザーのNotionメモをベクトル化して管理
+- **コールドスタート対応**（評価データ不足時はスコア0.5固定）
 
 ### 6.2 main.py - A2A Server エントリポイント
 
@@ -853,12 +850,6 @@ async def score_articles(task: Task) -> Task:
 app = FastAPI(title="Librarian Agent")
 app.mount("/", server.app)
 
-@app.post("/api/v1/sync-embeddings")
-async def sync_embeddings(user_id: str):
-    """Notionメモのembeddingを同期"""
-    await service.sync_notion_embeddings(user_id)
-    return {"status": "success"}
-
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
@@ -871,13 +862,13 @@ from a2a import AgentCard, Skill
 
 agent_card = AgentCard(
     name="Librarian Agent",
-    description="記事にユーザーコンテキストとの関連性スコアを付与するエージェント",
+    description="ユーザー評価ベースのLLMスコアリングで記事に関連性スコアを付与するエージェント",
     url="https://librarian-agent-xxx.run.app",
     skills=[
         Skill(
             id="score_articles",
             name="記事スコアリング",
-            description="コレクション内の全記事にNotionメモとの関連性スコアを付与"
+            description="コレクション内の全記事にユーザー評価ベースの関連性スコアを付与"
         )
     ],
     capabilities={
@@ -894,24 +885,18 @@ import asyncio
 import logging
 
 from shared.config import settings
-from shared.notion_client import NotionClient
-from shared.vector_search import VectorSearchClient
 from shared.gemini_client import GeminiClient
 from shared.firestore_client import FirestoreClient
-from shared.a2a_client import A2AClient
 from shared.models import (
-    ScoredArticle, ScoringStatus, ResearchStatus, ResearchArticleParams
+    ScoredArticle, ScoringStatus, ResearchStatus, CollectionStatus
 )
 
 logger = logging.getLogger(__name__)
 
 class LibrarianService:
     def __init__(self):
-        self.notion = NotionClient()
-        self.vector_search = VectorSearchClient()
         self.gemini = GeminiClient(model="flash")
         self.firestore = FirestoreClient()
-        self.a2a_client = A2AClient()
 
     async def score_collection(self, user_id: str, collection_id: str):
         """コレクション内の全記事にスコアを付与"""
@@ -920,24 +905,42 @@ class LibrarianService:
         collection = await self.firestore.get_collection(collection_id)
         logger.info(f"Scoring {len(collection.articles)} articles for collection: {collection_id}")
 
-        # 2. 並列でスコアリング
-        tasks = [
-            self._score_single(user_id, article)
-            for article in collection.articles
-        ]
-        scored_articles = await asyncio.gather(*tasks, return_exceptions=True)
+        # 2. 過去の高評価記事を取得してユーザー興味プロファイルを生成
+        high_rated_articles = await self.firestore.get_high_rated_articles(
+            user_id=user_id,
+            min_rating=settings.high_rating_threshold
+        )
 
-        # 3. エラー処理とスコア設定
-        for i, result in enumerate(scored_articles):
-            if isinstance(result, Exception):
-                logger.warning(f"Scoring failed for article: {result}")
-                collection.articles[i].scoring_status = ScoringStatus.SCORED
-                collection.articles[i].relevance_score = 0.0
-                collection.articles[i].relevance_reason = "スコアリング中にエラーが発生しました"
-            else:
-                collection.articles[i] = result
+        # 3. コールドスタート判定
+        if len(high_rated_articles) < settings.min_ratings_for_scoring:
+            logger.info(f"Cold start: only {len(high_rated_articles)} ratings, skipping LLM scoring")
+            for article in collection.articles:
+                article.scoring_status = ScoringStatus.SCORED
+                article.relevance_score = 0.5  # 全記事同一スコア
+                article.relevance_reason = "評価データ蓄積中のため、スコアリングをスキップしました"
+        else:
+            # 4. ユーザー興味プロファイルを生成
+            interest_profile = await self._generate_interest_profile(high_rated_articles)
+            logger.info(f"Generated interest profile from {len(high_rated_articles)} high-rated articles")
 
-        # 4. スコア順にソートし、上位N件をピックアップとしてマーク
+            # 5. 並列でスコアリング
+            tasks = [
+                self._score_single(article, interest_profile)
+                for article in collection.articles
+            ]
+            scored_articles = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # 6. エラー処理とスコア設定
+            for i, result in enumerate(scored_articles):
+                if isinstance(result, Exception):
+                    logger.warning(f"Scoring failed for article: {result}")
+                    collection.articles[i].scoring_status = ScoringStatus.SCORED
+                    collection.articles[i].relevance_score = 0.0
+                    collection.articles[i].relevance_reason = "スコアリング中にエラーが発生しました"
+                else:
+                    collection.articles[i] = result
+
+        # 7. スコア順にソートし、上位N件をピックアップとしてマーク
         collection.articles.sort(key=lambda x: x.relevance_score, reverse=True)
         pickup_count = settings.pickup_count
         for i, article in enumerate(collection.articles):
@@ -945,134 +948,127 @@ class LibrarianService:
                 article.is_pickup = True
                 article.research_status = ResearchStatus.PENDING
 
-        # 5. Firestoreに書き戻し
+        # 8. Firestoreに書き戻し
         await self.firestore.update_collection_articles(collection_id, collection.articles)
-        logger.info(f"Updated scores for collection: {collection_id}")
 
-        # 6. ピックアップ記事をResearcherにA2Aで送信
-        pickup_articles = [a for a in collection.articles if a.is_pickup]
-        for article in pickup_articles:
-            params = ResearchArticleParams(
-                user_id=user_id,
-                collection_id=collection_id,
-                article_url=article.url
-            )
-            await self.a2a_client.send_message(
-                agent_url=settings.researcher_agent_url,
-                skill="research_article",
-                params=params.model_dump()
-            )
-            logger.info(f"Sent A2A research_article request for: {article.title}")
+        # 9. コレクションステータスを完了に更新（Researcherは手動トリガーのため）
+        await self.firestore.update_collection_status(
+            collection_id, CollectionStatus.COMPLETED
+        )
+        logger.info(f"Scoring completed for collection: {collection_id}")
+
+    async def _generate_interest_profile(self, high_rated_articles: list[dict]) -> str:
+        """過去の高評価記事からユーザー興味プロファイルを生成"""
+        articles_summary = "\n".join([
+            f"- タイトル: {a['title']}, 評価: {a['user_rating']}★"
+            + (f", コメント: {a['user_comment']}" if a.get('user_comment') else "")
+            for a in high_rated_articles[:20]  # 最新20件まで
+        ])
+
+        prompt = f"""
+以下はユーザーが高く評価した記事の一覧です。
+この情報から、ユーザーの技術的な興味・関心を簡潔にまとめてください。
+
+## 高評価記事
+{articles_summary}
+
+## 出力形式
+- ユーザーの主な関心分野（箇条書き3-5項目）
+- 特に注目しているキーワードやトピック
+"""
+        return await self.gemini.generate_text(prompt)
 
     async def _score_single(
         self,
-        user_id: str,
-        article: ScoredArticle
+        article: ScoredArticle,
+        interest_profile: str
     ) -> ScoredArticle:
-        """単一記事のスコアリング"""
+        """単一記事のLLMベーススコアリング"""
 
-        # 1. 記事をベクトル化
         article_text = f"{article.title}\n{article.content or ''}"
-        article_embedding = await self.gemini.embed(article_text)
 
-        # 2. 類似するNotionページを検索
-        similar_pages = await self.vector_search.search(
-            user_id=user_id,
-            query_vector=article_embedding,
-            top_k=5
-        )
+        prompt = f"""
+以下のユーザー興味プロファイルに基づいて、記事の関連性を評価してください。
 
-        # 3. スコアリング結果を設定
+## ユーザー興味プロファイル
+{interest_profile}
+
+## 記事
+{article_text}
+
+## 出力形式（JSON）
+{{
+  "score": 0.0〜1.0の数値（関連性が高いほど1.0に近い）,
+  "reason": "この記事がユーザーに関連する理由を1文で"
+}}
+"""
+        result = await self.gemini.generate_json(prompt)
+
         article.scoring_status = ScoringStatus.SCORED
-
-        if not similar_pages:
-            article.relevance_score = 0.0
-            article.relevance_reason = "関連するコンテキストが見つかりませんでした"
-            article.related_notion_pages = []
-            return article
-
-        # 4. スコアと関連ページを設定
-        article.relevance_score = similar_pages[0]["score"]
-        article.related_notion_pages = [p["notion_page_id"] for p in similar_pages[:3]]
-        article.relevance_reason = await self._generate_reason(article, similar_pages[0])
+        article.relevance_score = min(max(float(result.get("score", 0.0)), 0.0), 1.0)
+        article.relevance_reason = result.get("reason", "")
 
         return article
-
-    async def _generate_reason(self, article: ScoredArticle, related_page: dict) -> str:
-        """関連性の理由を生成"""
-        prompt = f"""
-        以下の記事とNotionメモの関連性を1文で説明してください。
-
-        記事: {article.title}
-        Notionメモ: {related_page['title']}
-
-        例: 「過去のメモ「AIエージェント設計」で関心を示していたトピックです」
-        """
-        return await self.gemini.generate_text(prompt)
-
-    async def sync_notion_embeddings(self, user_id: str):
-        """Notionページのembeddingを同期"""
-
-        # 1. Notionからページ一覧取得
-        pages = await self.notion.get_all_pages(user_id)
-
-        # 2. 各ページをベクトル化してVector Searchに登録
-        for page in pages:
-            content = await self.notion.get_page_content(page["id"])
-            embedding = await self.gemini.embed(content)
-
-            await self.vector_search.upsert(
-                user_id=user_id,
-                notion_page_id=page["id"],
-                notion_page_title=page["title"],
-                content=content[:1000],  # デバッグ用に一部保存
-                embedding=embedding
-            )
 ```
 
-### 6.4 scorer.py - スコアリングロジック
+### 6.4 scorer.py - LLMベーススコアリングロジック
 
 ```python
 from typing import NamedTuple
+from shared.gemini_client import GeminiClient
 
 class ScoreResult(NamedTuple):
     score: float
     reason: str
-    related_pages: list[str]
 
 class ArticleScorer:
-    """記事のスコアリングロジック"""
+    """LLMベースの記事スコアリングロジック"""
 
-    def calculate_score(
+    def __init__(self):
+        self.gemini = GeminiClient(model="flash")
+
+    async def calculate_score(
         self,
-        vector_scores: list[dict],
-        keyword_bonus: float = 0.0
+        article_text: str,
+        interest_profile: str
     ) -> ScoreResult:
         """
-        ベクトル類似度をベースにスコアを計算
+        ユーザー興味プロファイルに基づいてLLMでスコアを計算
 
-        MVP ではベクトル類似度のみを使用。
-        将来的にはキーワードマッチやユーザーフィードバックも考慮。
+        Args:
+            article_text: 記事のタイトル+本文
+            interest_profile: ユーザーの興味プロファイル（LLM生成）
+
+        Returns:
+            スコアと理由のタプル
         """
-        if not vector_scores:
+        if not interest_profile:
             return ScoreResult(
-                score=0.0,
-                reason="関連するコンテキストがありません",
-                related_pages=[]
+                score=0.5,
+                reason="評価データ蓄積中のため、デフォルトスコアを設定しました"
             )
 
-        # 上位3件の平均スコアを使用
-        top_scores = [v["score"] for v in vector_scores[:3]]
-        avg_score = sum(top_scores) / len(top_scores)
+        prompt = f"""
+以下のユーザー興味プロファイルに基づいて、記事の関連性を評価してください。
 
-        # キーワードボーナスを加算（将来拡張用）
-        final_score = min(avg_score + keyword_bonus, 1.0)
+## ユーザー興味プロファイル
+{interest_profile}
 
-        return ScoreResult(
-            score=final_score,
-            reason=f"関連度: {final_score:.2f}",
-            related_pages=[v["notion_page_id"] for v in vector_scores[:3]]
-        )
+## 記事
+{article_text}
+
+## 出力形式（JSON）
+{{
+  "score": 0.0〜1.0の数値（関連性が高いほど1.0に近い）,
+  "reason": "この記事がユーザーに関連する理由を1文で"
+}}
+"""
+        result = await self.gemini.generate_json(prompt)
+
+        score = min(max(float(result.get("score", 0.0)), 0.0), 1.0)
+        reason = result.get("reason", "")
+
+        return ScoreResult(score=score, reason=reason)
 ```
 
 ---
@@ -1081,11 +1077,11 @@ class ArticleScorer:
 
 ### 7.1 責務
 
-- **A2A（research_article スキル）でLibrarianからトリガー受信**
-- **Firestoreからピックアップ記事を読み取り**
+- **A2A（research_article スキル）でDashboard APIからトリガー受信（ユーザー手動リクエスト）**
+- **Firestoreから対象記事を読み取り**
+- **過去の高評価記事のコンテキストを取得**
 - Gemini Pro による深掘りレポート生成
 - **Firestoreにレポート保存**（research_status: COMPLETED）
-- 全ピックアップ完了時にレポートステータスを更新
 
 ### 7.2 main.py - A2A Server エントリポイント
 
@@ -1106,7 +1102,7 @@ service = ResearcherService()
 
 @server.skill("research_article")
 async def research_article(task: Task) -> Task:
-    """記事詳細調査スキル（Librarian から呼び出し）"""
+    """記事詳細調査スキル（Dashboard API から手動トリガー）"""
     params = task.message.parts[0].data
     research_params = ResearchArticleParams(**params)
 
@@ -1157,7 +1153,7 @@ agent_card = AgentCard(
 import logging
 
 from shared.firestore_client import FirestoreClient
-from shared.models import ResearchArticleParams, CollectionStatus, ResearchStatus
+from shared.models import ResearchArticleParams, ResearchStatus
 from .report_generator import ReportGenerator
 
 logger = logging.getLogger(__name__)
@@ -1168,7 +1164,7 @@ class ResearcherService:
         self.generator = ReportGenerator()
 
     async def research(self, params: ResearchArticleParams):
-        """ピックアップ記事の詳細調査を実行"""
+        """ユーザーリクエストに基づく詳細調査を実行"""
 
         # 1. Firestoreからコレクションと対象記事を取得
         collection = await self.firestore.get_collection(params.collection_id)
@@ -1188,13 +1184,19 @@ class ResearcherService:
             research_status=ResearchStatus.RESEARCHING
         )
 
-        # 3. 詳細レポート生成
-        deep_dive_report = await self.generator.generate(
-            article=article,
-            related_pages=article.related_notion_pages
+        # 3. 過去の高評価記事のコンテキストを取得
+        high_rated_articles = await self.firestore.get_high_rated_articles(
+            user_id=params.user_id,
+            min_rating=4
         )
 
-        # 4. 記事を更新（research_status: COMPLETED）
+        # 4. 詳細レポート生成
+        deep_dive_report = await self.generator.generate(
+            article=article,
+            related_articles=high_rated_articles
+        )
+
+        # 5. 記事を更新（research_status: COMPLETED）
         await self.firestore.update_article_research(
             collection_id=params.collection_id,
             article_url=params.article_url,
@@ -1202,28 +1204,12 @@ class ResearcherService:
             research_status=ResearchStatus.COMPLETED
         )
         logger.info(f"Research completed for: {article.title}")
-
-        # 5. 全ピックアップ記事の処理完了か確認
-        collection = await self.firestore.get_collection(params.collection_id)
-        pickup_articles = [a for a in collection.articles if a.is_pickup]
-        all_completed = all(
-            a.research_status == ResearchStatus.COMPLETED
-            for a in pickup_articles
-        )
-
-        if all_completed:
-            await self.firestore.update_collection_status(
-                params.collection_id,
-                CollectionStatus.COMPLETED
-            )
-            logger.info(f"Collection completed: {params.collection_id}")
 ```
 
 ### 7.4 report_generator.py - レポート生成
 
 ```python
 from shared.gemini_client import GeminiClient
-from shared.notion_client import NotionClient
 from shared.models import ScoredArticle
 from shared.retry import with_retry
 
@@ -1235,12 +1221,12 @@ RESEARCH_PROMPT = """
 URL: {url}
 概要: {content}
 
-## ユーザーの関連メモ
+## 過去の関連する高評価記事
 {related_context}
 
 ## レポート要件
 1. **要約** (3-5文): 記事の核心を簡潔に
-2. **なぜあなたに関連するか**: ユーザーのメモとの関連性を説明
+2. **なぜあなたに関連するか**: 過去に高評価した記事との関連性を説明
 3. **キーポイント** (箇条書き): 重要な技術的ポイント
 4. **アクションアイテム** (任意): この情報を活かすための次のステップ
 
@@ -1250,18 +1236,17 @@ URL: {url}
 class ReportGenerator:
     def __init__(self):
         self.gemini = GeminiClient(model="pro")
-        self.notion = NotionClient()
 
     @with_retry
     async def generate(
         self,
         article: ScoredArticle,
-        related_pages: list[str]
+        related_articles: list[dict]
     ) -> str:
         """詳細レポートを生成"""
 
-        # 関連Notionページのコンテンツを取得
-        related_context = await self._get_related_context(related_pages)
+        # 過去の高評価記事のコンテキストを取得
+        related_context = self._get_related_context(related_articles)
 
         prompt = RESEARCH_PROMPT.format(
             title=article.title,
@@ -1272,20 +1257,19 @@ class ReportGenerator:
 
         return await self.gemini.generate_text(prompt)
 
-    async def _get_related_context(self, page_ids: list[str]) -> str:
-        """関連Notionページのコンテンツを取得"""
-        if not page_ids:
-            return "関連メモなし"
+    def _get_related_context(self, articles: list[dict]) -> str:
+        """過去の高評価記事のコンテキストを生成"""
+        if not articles:
+            return "関連する高評価記事なし"
 
         contexts = []
-        for page_id in page_ids[:3]:  # 最大3ページ
-            try:
-                content = await self.notion.get_page_content(page_id)
-                contexts.append(f"- {content[:500]}...")
-            except Exception:
-                continue
+        for article in articles[:5]:  # 最大5件
+            context = f"- {article['title']}（{article['user_rating']}★）"
+            if article.get('user_comment'):
+                context += f" - {article['user_comment']}"
+            contexts.append(context)
 
-        return "\n".join(contexts) if contexts else "関連メモなし"
+        return "\n".join(contexts)
 ```
 
 ---
@@ -1476,75 +1460,54 @@ class FirestoreClient:
         await self.db.collection("collections").document(collection_id).update({
             "status": status.value
         })
-```
 
-### 8.3 notion_client.py
+    async def get_high_rated_articles(
+        self,
+        user_id: str,
+        min_rating: int = 4
+    ) -> list[dict]:
+        """過去の高評価記事を取得（スコアリング・レポート生成用）"""
+        collections = self.db.collection("collections").where(
+            "userId", "==", user_id
+        ).order_by("createdAt", direction="DESCENDING").limit(30)
 
-```python
-from notion_client import AsyncClient
+        high_rated = []
+        async for doc in collections.stream():
+            data = doc.to_dict()
+            for article in data.get("articles", []):
+                if article.get("userRating") and article["userRating"] >= min_rating:
+                    high_rated.append({
+                        "title": article["title"],
+                        "url": article["url"],
+                        "content": article.get("content", "")[:300],
+                        "user_rating": article["userRating"],
+                        "user_comment": article.get("userComment"),
+                    })
 
-from .config import settings
+        return high_rated
 
-class NotionClient:
-    def __init__(self):
-        self.client = AsyncClient(auth=settings.notion_token)
+    async def update_article_feedback(
+        self,
+        collection_id: str,
+        article_url: str,
+        rating: int,
+        comment: Optional[str] = None
+    ):
+        """記事のユーザー評価を更新"""
+        doc_ref = self.db.collection("collections").document(collection_id)
+        doc = await doc_ref.get()
+        data = doc.to_dict()
 
-    async def get_all_pages(self, user_id: str) -> list[dict]:
-        """ユーザーのNotionページ一覧を取得"""
-        # Internal Integration の場合、アクセス可能な全ページを取得
-        results = []
-        cursor = None
-
-        while True:
-            response = await self.client.search(
-                filter={"property": "object", "value": "page"},
-                start_cursor=cursor
-            )
-
-            for page in response["results"]:
-                results.append({
-                    "id": page["id"],
-                    "title": self._extract_title(page),
-                    "url": page["url"]
-                })
-
-            if not response["has_more"]:
+        for article in data["articles"]:
+            if article["url"] == article_url:
+                article["userRating"] = rating
+                article["userComment"] = comment
                 break
-            cursor = response["next_cursor"]
 
-        return results
-
-    async def get_page_content(self, page_id: str) -> str:
-        """ページのコンテンツを取得"""
-        blocks = await self.client.blocks.children.list(page_id)
-
-        content_parts = []
-        for block in blocks["results"]:
-            text = self._extract_block_text(block)
-            if text:
-                content_parts.append(text)
-
-        return "\n".join(content_parts)
-
-    def _extract_title(self, page: dict) -> str:
-        """ページタイトルを抽出"""
-        props = page.get("properties", {})
-        for prop in props.values():
-            if prop["type"] == "title":
-                title_parts = prop.get("title", [])
-                return "".join(t["plain_text"] for t in title_parts)
-        return "Untitled"
-
-    def _extract_block_text(self, block: dict) -> str:
-        """ブロックからテキストを抽出"""
-        block_type = block["type"]
-        if block_type in ["paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item"]:
-            rich_text = block[block_type].get("rich_text", [])
-            return "".join(t["plain_text"] for t in rich_text)
-        return ""
+        await doc_ref.update({"articles": data["articles"]})
 ```
 
-### 8.4 http_client.py
+### 8.3 http_client.py
 
 ```python
 import httpx
@@ -1670,28 +1633,34 @@ services/agents/
 ```python
 # tests/unit/test_scorer.py
 import pytest
+from unittest.mock import AsyncMock, patch
 
 from librarian.scorer import ArticleScorer, ScoreResult
 
-def test_scorer_with_no_results():
+@pytest.mark.asyncio
+async def test_scorer_with_no_profile():
     scorer = ArticleScorer()
-    result = scorer.calculate_score([])
+    result = await scorer.calculate_score(
+        article_text="Test article",
+        interest_profile=""
+    )
 
-    assert result.score == 0.0
-    assert result.related_pages == []
+    assert result.score == 0.5
+    assert "デフォルトスコア" in result.reason
 
-def test_scorer_calculates_average():
+@pytest.mark.asyncio
+@patch.object(ArticleScorer, '_call_gemini')
+async def test_scorer_with_profile(mock_gemini):
+    mock_gemini.return_value = {"score": 0.85, "reason": "AI関連の記事"}
     scorer = ArticleScorer()
-    vector_scores = [
-        {"score": 0.9, "notion_page_id": "page1"},
-        {"score": 0.8, "notion_page_id": "page2"},
-        {"score": 0.7, "notion_page_id": "page3"},
-    ]
 
-    result = scorer.calculate_score(vector_scores)
+    result = await scorer.calculate_score(
+        article_text="AI Agent の新設計パターン",
+        interest_profile="ユーザーはAIエージェント設計に強い関心がある"
+    )
 
-    assert result.score == 0.8  # (0.9 + 0.8 + 0.7) / 3
-    assert len(result.related_pages) == 3
+    assert result.score == 0.85
+    assert "AI" in result.reason
 ```
 
 ### 10.3 ローカル実行
@@ -1747,13 +1716,11 @@ uvicorn researcher.main:app --reload --port 8003
 ```bash
 GOOGLE_CLOUD_PROJECT=curation-persona
 FIRESTORE_DATABASE=(default)
-PUBSUB_TOPIC_BATCH=batch-trigger
-PUBSUB_TOPIC_SCORE=score-request
-PUBSUB_TOPIC_RESEARCH=research-request
+LIBRARIAN_AGENT_URL=http://localhost:8002
+RESEARCHER_AGENT_URL=http://localhost:8003
 GEMINI_FLASH_MODEL=gemini-2.5-flash
 GEMINI_PRO_MODEL=gemini-2.5-pro
-VECTOR_SEARCH_INDEX_ENDPOINT=projects/xxx/locations/asia-northeast1/indexEndpoints/xxx
-VECTOR_SEARCH_DEPLOYED_INDEX_ID=xxx
-NOTION_TOKEN=ntn_xxx
 PICKUP_COUNT=2
+MIN_RATINGS_FOR_SCORING=3
+HIGH_RATING_THRESHOLD=4
 ```
