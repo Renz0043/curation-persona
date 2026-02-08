@@ -905,23 +905,17 @@ class LibrarianService:
         collection = await self.firestore.get_collection(collection_id)
         logger.info(f"Scoring {len(collection.articles)} articles for collection: {collection_id}")
 
-        # 2. 過去の高評価記事を取得してユーザー興味プロファイルを生成
-        high_rated_articles = await self.firestore.get_high_rated_articles(
-            user_id=user_id,
-            min_rating=settings.high_rating_threshold
-        )
+        # 2. 興味プロファイルを取得（必要なら再生成）
+        interest_profile = await self._ensure_interest_profile(user_id)
 
-        # 3. コールドスタート判定
-        if len(high_rated_articles) < settings.min_ratings_for_scoring:
-            logger.info(f"Cold start: only {len(high_rated_articles)} ratings, skipping LLM scoring")
+        # 3. コールドスタート判定（プロファイルが未生成の場合）
+        if not interest_profile:
+            logger.info(f"Cold start: no interest profile, skipping LLM scoring")
             for article in collection.articles:
                 article.scoring_status = ScoringStatus.SCORED
                 article.relevance_score = 0.5  # 全記事同一スコア
                 article.relevance_reason = "評価データ蓄積中のため、スコアリングをスキップしました"
         else:
-            # 4. ユーザー興味プロファイルを生成
-            interest_profile = await self._generate_interest_profile(high_rated_articles)
-            logger.info(f"Generated interest profile from {len(high_rated_articles)} high-rated articles")
 
             # 5. 並列でスコアリング
             tasks = [
@@ -957,8 +951,46 @@ class LibrarianService:
         )
         logger.info(f"Scoring completed for collection: {collection_id}")
 
+    async def _ensure_interest_profile(self, user_id: str) -> str | None:
+        """興味プロファイルを取得し、必要なら再生成してFirestoreに永続保存"""
+
+        # 1. 既存プロファイルを取得
+        user = await self.firestore.get_user(user_id)
+        existing_profile = user.get("interestProfile")
+        profile_updated_at = user.get("interestProfileUpdatedAt")
+
+        # 2. 高評価記事を取得
+        high_rated_articles = await self.firestore.get_high_rated_articles(
+            user_id=user_id,
+            min_rating=settings.high_rating_threshold
+        )
+
+        # 3. コールドスタート: 評価データ不足
+        if len(high_rated_articles) < settings.min_ratings_for_scoring:
+            return None
+
+        # 4. 再生成が必要か判定（プロファイル未生成 or 新規評価あり）
+        needs_regeneration = (
+            not existing_profile
+            or not profile_updated_at
+            or await self.firestore.has_new_ratings_since(user_id, profile_updated_at)
+        )
+
+        if not needs_regeneration:
+            logger.info(f"Using cached interest profile for user: {user_id}")
+            return existing_profile
+
+        # 5. LLMで興味プロファイルを再生成
+        logger.info(f"Regenerating interest profile from {len(high_rated_articles)} high-rated articles")
+        new_profile = await self._generate_interest_profile(high_rated_articles)
+
+        # 6. Firestoreに永続保存
+        await self.firestore.update_interest_profile(user_id, new_profile)
+
+        return new_profile
+
     async def _generate_interest_profile(self, high_rated_articles: list[dict]) -> str:
-        """過去の高評価記事からユーザー興味プロファイルを生成"""
+        """過去の高評価記事からユーザー興味プロファイルをLLMで生成"""
         articles_summary = "\n".join([
             f"- タイトル: {a['title']}, 評価: {a['user_rating']}★"
             + (f", コメント: {a['user_comment']}" if a.get('user_comment') else "")
@@ -1505,6 +1537,33 @@ class FirestoreClient:
                 break
 
         await doc_ref.update({"articles": data["articles"]})
+
+    async def update_interest_profile(self, user_id: str, profile: str):
+        """ユーザーの興味プロファイルをFirestoreに永続保存"""
+        await self.db.collection("users").document(user_id).update({
+            "interestProfile": profile,
+            "interestProfileUpdatedAt": firestore.SERVER_TIMESTAMP
+        })
+
+    async def has_new_ratings_since(
+        self,
+        user_id: str,
+        since: datetime
+    ) -> bool:
+        """指定日時以降に新規評価があるかチェック"""
+        collections = self.db.collection("collections").where(
+            "userId", "==", user_id
+        ).where(
+            "createdAt", ">=", since
+        ).limit(10)
+
+        async for doc in collections.stream():
+            data = doc.to_dict()
+            for article in data.get("articles", []):
+                if article.get("userRating") is not None:
+                    return True
+
+        return False
 ```
 
 ### 8.3 http_client.py

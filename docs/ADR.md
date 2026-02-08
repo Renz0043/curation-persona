@@ -154,14 +154,15 @@
   - 評価データが蓄積されるほど精度が向上する仕組み
 - **Librarian Agentの役割変更**:
   - 蓄積された高評価記事（4-5★）をFirestoreから取得
-  - LLMで「ユーザー興味プロファイル」を生成
+  - LLMで「ユーザー興味プロファイル」を生成し、**Firestoreに永続保持**（`users/{userId}.interestProfile`）
+  - 日次バッチ前に新規評価の有無を確認し、あればプロファイルを再生成（なければキャッシュ利用）
   - 新記事をプロファイルに基づいてGemini Flashでスコアリング
-- **コールドスタート対応**: 評価データ0件の場合はスコアリングをスキップし、全記事を時系列表示（スコア0.5固定）
+- **コールドスタート対応**: 評価データ不足（閾値未満）の場合はスコアリングをスキップし、全記事を時系列表示（スコア0.5固定）
 - **Researcherトリガー変更**: Librarian自動ピックアップ → ユーザー手動リクエストに変更。ユーザーが気になる記事を指定して深掘りレポートを依頼
 - **影響範囲**:
   - ADR-003（Vector Search）を保留
   - ADR-004（Notion連携）を廃止
-  - Firestoreスキーマ変更（`userRating`, `userComment` 追加、Notion関連フィールド削除）
+  - Firestoreスキーマ変更（`userRating`, `userComment`, `interestProfile`, `interestProfileUpdatedAt` 追加、Notion関連フィールド削除）
 
 ---
 

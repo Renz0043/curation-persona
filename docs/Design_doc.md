@@ -95,6 +95,8 @@ firestore/
 │   │       }
 │   │     }
 │   │   ]
+│   ├── interestProfile: string | null  // LLM生成の興味プロファイル（永続保持）
+│   ├── interestProfileUpdatedAt: timestamp | null  // プロファイル最終更新日時
 │   ├── preferences: {
 │   │     dailyReportTime: string     // "06:00"
 │   │   }
@@ -228,11 +230,15 @@ sequenceDiagram
     Collector->>DB: 記事保存 (scoring_status: PENDING)
     Collector->>Librarian: A2A: score_articles
 
-    Librarian->>DB: 過去の高評価記事（4-5★）取得
-    Librarian->>Librarian: Gemini Flash で興味プロファイル生成
+    Librarian->>DB: ユーザーの興味プロファイル読み取り
+    alt 新規評価ありor プロファイル未生成
+        Librarian->>DB: 過去の高評価記事（4-5★）取得
+        Librarian->>Librarian: Gemini Flash で興味プロファイル再生成
+        Librarian->>DB: プロファイル保存 (users/{userId})
+    end
     Librarian->>DB: 新記事読み取り
     Librarian->>Librarian: Gemini Flash でスコアリング
-    Note right of Librarian: プロファイルに基づき各記事をスコアリング
+    Note right of Librarian: 永続プロファイルに基づき各記事をスコアリング
     Librarian->>DB: スコア書き戻し (scoring_status: SCORED)
     Note right of Librarian: 上位N件をピックアップとしてマーク
 
