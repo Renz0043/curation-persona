@@ -157,9 +157,15 @@ firestore/
 }
 ```
 
-#### Dashboard API → Researcher（research_article スキル呼び出し / 手動トリガー）
+#### Dashboard → Researcher（深掘りレポート生成 / SSE ストリーミング）
 
-> ユーザーがDashboardから「深掘りリクエスト」を送信すると、Dashboard APIがResearcher AgentにA2Aメッセージを送信する。
+> ユーザーがDashboardから「深掘りリクエスト」を送信すると、Next.js API Route が Researcher Agent に接続し、Gemini Pro のストリーミング出力を SSE でブラウザに直接配信する。Firestore への保存は生成完了後に1回のみ行い、DB負荷を最小化する。
+>
+> **リアルタイム配信フロー:**
+> 1. Dashboard (Next.js API Route) → Researcher Agent に HTTP リクエスト
+> 2. Researcher → Gemini Pro streaming で深掘りレポート生成
+> 3. SSE でブラウザにテキストチャンクを逐次配信（リアルタイム表示）
+> 4. 生成完了後、Firestore に完成レポートを1回だけ保存
 
 ```json
 {
@@ -264,11 +270,14 @@ sequenceDiagram
 
     Note over User: ユーザーが深掘りをリクエスト
     User->>Dashboard: 深掘りリクエスト
-    Dashboard->>Researcher: A2A: research_article
+    Dashboard->>Researcher: API Route → Researcher (SSE接続)
     Researcher->>DB: 記事 + 過去の高評価記事読み取り
-    Researcher->>Researcher: Gemini Pro で深掘り
-    Researcher->>DB: レポート保存 (research_status: COMPLETED)
-    Researcher-->>Dashboard: Task completed
+    Researcher->>Researcher: Gemini Pro で深掘り (streaming)
+    loop ストリーミング配信
+        Researcher-->>Dashboard: SSE: テキストチャンク
+        Dashboard-->>User: リアルタイム表示
+    end
+    Researcher->>DB: 完成レポート保存 (research_status: COMPLETED, 1回のみ)
 ```
 
 ---
