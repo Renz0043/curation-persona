@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     researcher_agent_url: str = "http://localhost:8003"
 
     # Gemini
+    gemini_api_key: str = ""
     gemini_flash_model: str = "gemini-2.5-flash"
     gemini_pro_model: str = "gemini-2.5-pro"
 
