@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import feedparser
+from bs4 import BeautifulSoup
 
 from shared.models import Article, SourceConfig, SourceType
 
@@ -35,18 +36,41 @@ class RSSFetcher(BaseFetcher):
             if published and published < cutoff_date:
                 continue
 
+            summary, content = self._extract_content(entry)
             article = Article(
                 title=entry.get("title", ""),
                 url=entry.get("link", ""),
                 source=config.name,
                 source_type=SourceType.RSS,
-                content=entry.get("summary", ""),
+                summary=summary,
+                content=content,
                 published_at=published,
             )
             articles.append(article)
 
         logger.info(f"Fetched {len(articles)} articles from RSS: {config.name}")
         return articles
+
+    def _extract_content(self, entry) -> tuple[str, str]:
+        """RSS entry から summary と content を取得し、HTMLを除去する"""
+        summary = self._strip_html(entry.get("summary", ""))
+        # feedparser は content を list[dict] で返す
+        content = ""
+        for c in entry.get("content", []):
+            if isinstance(c, dict) and c.get("value"):
+                text = self._strip_html(c["value"])
+                if len(text) > len(content):
+                    content = text
+        # content がなければ summary をフォールバック
+        if not content:
+            content = summary
+        return summary, content
+
+    def _strip_html(self, html: str) -> str:
+        """HTMLタグを除去してテキストのみ返す"""
+        if not html:
+            return ""
+        return BeautifulSoup(html, "html.parser").get_text(separator=" ", strip=True)
 
     def _parse_date(self, date_str: str | None) -> datetime | None:
         if not date_str:
