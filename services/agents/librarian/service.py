@@ -6,6 +6,7 @@ from shared.config import settings
 from shared.firestore_client import FirestoreClient
 from shared.gemini_client import GeminiClient
 from shared.models import CollectionStatus, ResearchStatus, ScoringStatus
+from shared.scraper import WebScraper
 
 from .scorer import ArticleScorer
 
@@ -33,10 +34,12 @@ class LibrarianService:
         firestore: FirestoreClient,
         gemini_client: GeminiClient,
         scorer: ArticleScorer,
+        scraper: WebScraper,
     ):
         self.firestore = firestore
         self.gemini_client = gemini_client
         self.scorer = scorer
+        self.scraper = scraper
 
     async def score_collection(self, user_id: str, collection_id: str) -> dict:
         logger.info(f"score_collection: user_id={user_id}, collection_id={collection_id}")
@@ -78,6 +81,13 @@ class LibrarianService:
                 if i < pickup_count:
                     article.is_pickup = True
                     article.research_status = ResearchStatus.PENDING
+
+            # 上位記事のコンテンツ補完（スクレイピング）
+            await self.scraper.scrape_articles(
+                articles,
+                max_count=settings.scrape_max_count,
+                delay=settings.scrape_delay_sec,
+            )
 
             await self.firestore.update_collection_articles(collection_id, articles)
             await self.firestore.update_collection_status(

@@ -38,12 +38,12 @@ def _make_collection(articles=None, collection_id="col_1"):
 
 
 class Test_LibrarianService:
-    def _make_service(self, mock_firestore_client, mock_gemini_client):
+    def _make_service(self, mock_firestore_client, mock_gemini_client, mock_scraper):
         scorer = ArticleScorer(mock_gemini_client)
-        return LibrarianService(mock_firestore_client, mock_gemini_client, scorer)
+        return LibrarianService(mock_firestore_client, mock_gemini_client, scorer, mock_scraper)
 
     async def test_コールドスタート時にデフォルトスコアが設定される(
-        self, mock_firestore_client, mock_gemini_client
+        self, mock_firestore_client, mock_gemini_client, mock_scraper
     ):
         articles = [
             _make_article("記事1", "https://example.com/1"),
@@ -56,7 +56,7 @@ class Test_LibrarianService:
         mock_firestore_client.get_user.return_value = {"user_id": "user_1"}
         mock_firestore_client.get_high_rated_articles.return_value = []
 
-        service = self._make_service(mock_firestore_client, mock_gemini_client)
+        service = self._make_service(mock_firestore_client, mock_gemini_client, mock_scraper)
         result = await service.score_collection("user_1", "col_1")
 
         assert result["status"] == "success"
@@ -75,7 +75,7 @@ class Test_LibrarianService:
         )
 
     async def test_通常フローでスコアリングとピックアップが行われる(
-        self, mock_firestore_client, mock_gemini_client
+        self, mock_firestore_client, mock_gemini_client, mock_scraper
     ):
         articles = [
             _make_article("低スコア記事", "https://example.com/1"),
@@ -100,7 +100,7 @@ class Test_LibrarianService:
             {"score": 0.6, "reason": "ある程度関連性がある"},
         ]
 
-        service = self._make_service(mock_firestore_client, mock_gemini_client)
+        service = self._make_service(mock_firestore_client, mock_gemini_client, mock_scraper)
         result = await service.score_collection("user_1", "col_1")
 
         assert result["status"] == "success"
@@ -120,7 +120,7 @@ class Test_LibrarianService:
         assert saved_articles[2].is_pickup is False
 
     async def test_プロファイル再生成が新規評価で発火する(
-        self, mock_firestore_client, mock_gemini_client
+        self, mock_firestore_client, mock_gemini_client, mock_scraper
     ):
         articles = [_make_article()]
         collection = _make_collection(articles)
@@ -141,7 +141,7 @@ class Test_LibrarianService:
         mock_gemini_client.generate_text.return_value = "新しいプロファイル"
         mock_gemini_client.generate_json.return_value = {"score": 0.7, "reason": "関連あり"}
 
-        service = self._make_service(mock_firestore_client, mock_gemini_client)
+        service = self._make_service(mock_firestore_client, mock_gemini_client, mock_scraper)
         await service.score_collection("user_1", "col_1")
 
         # プロファイル再生成を確認
@@ -151,7 +151,7 @@ class Test_LibrarianService:
         )
 
     async def test_高評価記事不足時はコールドスタートになる(
-        self, mock_firestore_client, mock_gemini_client
+        self, mock_firestore_client, mock_gemini_client, mock_scraper
     ):
         articles = [_make_article()]
         collection = _make_collection(articles)
@@ -163,7 +163,7 @@ class Test_LibrarianService:
             {"title": "記事A", "url": "https://a.com", "user_rating": 5},
         ]
 
-        service = self._make_service(mock_firestore_client, mock_gemini_client)
+        service = self._make_service(mock_firestore_client, mock_gemini_client, mock_scraper)
         result = await service.score_collection("user_1", "col_1")
 
         assert result["status"] == "success"
@@ -173,7 +173,7 @@ class Test_LibrarianService:
         assert collection.articles[0].relevance_score == 0.5
 
     async def test_スコアリング例外時にFAILEDステータスに遷移する(
-        self, mock_firestore_client, mock_gemini_client
+        self, mock_firestore_client, mock_gemini_client, mock_scraper
     ):
         articles = [_make_article()]
         collection = _make_collection(articles)
@@ -191,7 +191,7 @@ class Test_LibrarianService:
         # Firestore更新で例外発生（scorer は例外を吸収するため、後続処理で発火）
         mock_firestore_client.update_collection_articles.side_effect = RuntimeError("Firestore error")
 
-        service = self._make_service(mock_firestore_client, mock_gemini_client)
+        service = self._make_service(mock_firestore_client, mock_gemini_client, mock_scraper)
 
         with pytest.raises(RuntimeError, match="Firestore error"):
             await service.score_collection("user_1", "col_1")
@@ -203,3 +203,22 @@ class Test_LibrarianService:
         mock_firestore_client.update_collection_status.assert_any_call(
             "col_1", CollectionStatus.FAILED
         )
+
+    async def test_スコアリング後に上位記事のコンテンツが補完される(
+        self, mock_firestore_client, mock_gemini_client, mock_scraper
+    ):
+        articles = [_make_article()]
+        collection = _make_collection(articles)
+        mock_firestore_client.get_collection.return_value = collection
+        mock_firestore_client.get_user.return_value = {"user_id": "user_1"}
+        mock_firestore_client.get_high_rated_articles.return_value = []
+
+        service = self._make_service(mock_firestore_client, mock_gemini_client, mock_scraper)
+        await service.score_collection("user_1", "col_1")
+
+        # scrape_articles がソート済みarticlesで呼ばれることを確認
+        mock_scraper.scrape_articles.assert_awaited_once()
+        call_args = mock_scraper.scrape_articles.call_args
+        assert call_args[0][0] == collection.articles
+        assert call_args[1]["max_count"] == 10
+        assert call_args[1]["delay"] == 2.0
