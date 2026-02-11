@@ -260,6 +260,8 @@ sequenceDiagram
     Note right of Librarian: 永続プロファイルに基づき各記事をスコアリング
     Librarian->>DB: スコア書き戻し (scoring_status: SCORED)
     Note right of Librarian: 上位N件をピックアップとしてマーク
+    Librarian->>Librarian: 上位10件のコンテンツ補完（WebScraper）
+    Note right of Librarian: robots.txt準拠・逐次取得（2.0秒間隔）
 
     Librarian-->>Collector: Task completed
     Collector->>DB: status: completed
@@ -292,6 +294,8 @@ sequenceDiagram
 | LLM API エラー | 最大3回リトライ（exponential backoff） |
 | LLMスコアリングエラー | 関連性スコア0として処理継続 |
 | 評価データ不足（コールドスタート） | スコア0.5固定、全記事を時系列表示 |
+| スクレイピング失敗 | 記事単位でスキップ、元のcontentを維持。パイプライン全体は止めない |
+| robots.txt拒否 | 該当記事のスクレイピングをスキップ |
 
 ### 6.2 リトライ設定
 
