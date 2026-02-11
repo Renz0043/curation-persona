@@ -16,6 +16,11 @@ def mock_firestore_client():
     client.update_collection_articles = AsyncMock()
     client.update_collection_status = AsyncMock()
     client.get_high_rated_articles = AsyncMock(return_value=[])
+    client.update_interest_profile = AsyncMock()
+    client.has_new_ratings_since = AsyncMock(return_value=False)
+    client.update_article_feedback = AsyncMock()
+    client.update_article_research_status = AsyncMock()
+    client.update_article_research = AsyncMock()
     return client
 
 
@@ -28,6 +33,7 @@ def mock_gemini_client():
 
     client = GeminiClient.__new__(GeminiClient)
     client.model = "flash"
+    client.model_name = "gemini-2.5-flash"
     client.generate_text = AsyncMock(return_value="スタブレスポンス")
     client.generate_json = AsyncMock(return_value={"score": 0.5, "reason": "テスト"})
     return client

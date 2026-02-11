@@ -159,6 +159,27 @@ class FirestoreClient:
             }
         )
 
+    async def update_article_feedback(
+        self,
+        collection_id: str,
+        article_url: str,
+        rating: int,
+        comment: Optional[str] = None,
+    ):
+        if self.db is None:
+            logger.info(f"[STUB] update_article_feedback({collection_id}, {article_url})")
+            return
+        doc_ref = self.db.collection("collections").document(collection_id)
+        doc = await doc_ref.get()
+        data = doc.to_dict()
+        for article in data["articles"]:
+            if article["url"] == article_url:
+                article["user_rating"] = rating
+                if comment is not None:
+                    article["user_comment"] = comment
+                break
+        await doc_ref.update({"articles": data["articles"]})
+
     async def has_new_ratings_since(self, user_id: str, since: datetime) -> bool:
         if self.db is None:
             return False

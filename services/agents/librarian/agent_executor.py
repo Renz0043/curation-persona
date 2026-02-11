@@ -5,10 +5,18 @@ from a2a.server.events import EventQueue
 from a2a.types import DataPart
 from a2a.utils import new_agent_text_message
 
+from shared.firestore_client import FirestoreClient
+from shared.gemini_client import GeminiClient
+
+from .scorer import ArticleScorer
 from .service import LibrarianService
 
 logger = logging.getLogger(__name__)
-service = LibrarianService()
+
+firestore = FirestoreClient()
+gemini_client = GeminiClient("flash")
+scorer = ArticleScorer(gemini_client)
+service = LibrarianService(firestore, gemini_client, scorer)
 
 
 class LibrarianAgentExecutor(AgentExecutor):
