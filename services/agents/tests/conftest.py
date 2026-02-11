@@ -37,3 +37,33 @@ def mock_gemini_client():
     client.generate_text = AsyncMock(return_value="スタブレスポンス")
     client.generate_json = AsyncMock(return_value={"score": 0.5, "reason": "テスト"})
     return client
+
+
+@pytest.fixture
+def mock_a2a_client():
+    """A2AClient のモックフィクスチャ"""
+    from unittest.mock import AsyncMock
+
+    from shared.a2a_client import A2AClient
+
+    client = A2AClient.__new__(A2AClient)
+    client.send_message = AsyncMock(return_value={"status": "ok"})
+    return client
+
+
+@pytest.fixture
+def mock_fetcher_registry():
+    """FetcherRegistry のモックフィクスチャ"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from shared.fetchers.registry import FetcherRegistry
+
+    registry = FetcherRegistry.__new__(FetcherRegistry)
+    registry._fetchers = []
+
+    mock_fetcher = MagicMock()
+    mock_fetcher.fetch = AsyncMock(return_value=[])
+    mock_fetcher.supports = MagicMock(return_value=True)
+    registry.get_fetcher = MagicMock(return_value=mock_fetcher)
+
+    return registry
