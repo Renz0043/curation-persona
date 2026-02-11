@@ -136,9 +136,17 @@
   - 通信: JSON-RPC 2.0 over HTTP（a2a-sdk 標準）
   - データ共有: Firestore経由（ADR-006 維持）
   - トリガー: Cloud Scheduler → Collector Agent（A2A経由）
+- **SDK詳細** (a2a-sdk v0.3.22+):
+  - インストール: `pip install "a2a-sdk[http-server]"`
+  - サーバー: `A2AFastAPIApplication` + `DefaultRequestHandler` + `AgentExecutor` パターン
+  - エンドポイント: `GET /.well-known/agent-card.json`（Agent Card）、`POST /rpc`（JSON-RPC）
+  - クライアント: `A2AClient` + `A2ACardResolver` で Agent Card 取得→メッセージ送信
+  - 各エージェントは `AgentExecutor` 抽象クラスの `execute()` / `cancel()` を実装
+  - タスク管理: `InMemoryTaskStore`（開発用）、将来的にFirestore-backed TaskStoreも検討可能
 - **参考**:
   - [A2A Protocol 公式](https://a2a-protocol.org/latest/)
   - [a2a-python SDK](https://github.com/a2aproject/a2a-python)
+  - [a2a-sdk PyPI](https://pypi.org/project/a2a-sdk/) (v0.3.22, 2025-12-16)
 
 ---
 
