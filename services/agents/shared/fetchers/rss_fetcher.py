@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import feedparser
 
@@ -27,7 +27,7 @@ class RSSFetcher(BaseFetcher):
         loop = asyncio.get_event_loop()
         feed = await loop.run_in_executor(None, feedparser.parse, url)
 
-        cutoff_date = datetime.now() - timedelta(days=self.max_age_days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=self.max_age_days)
         articles = []
 
         for entry in feed.entries:
@@ -54,6 +54,9 @@ class RSSFetcher(BaseFetcher):
         try:
             from dateutil.parser import parse
 
-            return parse(date_str)
+            dt = parse(date_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
         except Exception:
             return None
