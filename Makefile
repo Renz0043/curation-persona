@@ -1,0 +1,47 @@
+AGENTS_DIR := services/agents
+VENV_BIN := .venv/bin
+
+.PHONY: setup-backend run-collector run-librarian run-researcher run-frontend test test-unit test-cov lint lint-fix help
+
+help: ## ヘルプを表示
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+# === Backend ===
+
+setup-backend: ## バックエンド環境セットアップ
+	cd $(AGENTS_DIR) && python3 -m venv .venv
+	cd $(AGENTS_DIR) && $(VENV_BIN)/pip install -e ".[dev]"
+	cd $(AGENTS_DIR) && cp -n .env.example .env 2>/dev/null || true
+
+run-collector: ## Collector Agent を起動 (port 8001)
+	cd $(AGENTS_DIR) && $(VENV_BIN)/uvicorn collector.main:app --reload --port 8001
+
+run-librarian: ## Librarian Agent を起動 (port 8002)
+	cd $(AGENTS_DIR) && $(VENV_BIN)/uvicorn librarian.main:app --reload --port 8002
+
+run-researcher: ## Researcher Agent を起動 (port 8003)
+	cd $(AGENTS_DIR) && $(VENV_BIN)/uvicorn researcher.main:app --reload --port 8003
+
+# === Frontend ===
+
+run-frontend: ## Next.js dev server を起動
+	cd apps/web && npm run dev
+
+# === Test ===
+
+test: ## 全テスト実行
+	cd $(AGENTS_DIR) && $(VENV_BIN)/pytest tests/ -v
+
+test-unit: ## ユニットテストのみ
+	cd $(AGENTS_DIR) && $(VENV_BIN)/pytest tests/unit -v
+
+test-cov: ## カバレッジ付きテスト
+	cd $(AGENTS_DIR) && $(VENV_BIN)/pytest tests/ --cov=. --cov-report=html
+
+# === Lint ===
+
+lint: ## ruff でリント
+	cd $(AGENTS_DIR) && $(VENV_BIN)/ruff check .
+
+lint-fix: ## ruff でリント + 自動修正
+	cd $(AGENTS_DIR) && $(VENV_BIN)/ruff check --fix .

@@ -129,7 +129,10 @@ firestore/
 
 ### 3.2 A2A メッセージ形式
 
-> エージェント間通信は [A2A プロトコル](https://a2a-protocol.org/latest/) に準拠
+> エージェント間通信は [A2A プロトコル](https://a2a-protocol.org/latest/) に準拠（a2a-sdk v0.3.22+）
+>
+> - RPCエンドポイント: `POST /rpc`（JSON-RPC 2.0）
+> - Agent Card: `GET /.well-known/agent-card.json`
 
 #### Collector → Librarian（score_articles スキル呼び出し）
 ```json
@@ -138,13 +141,14 @@ firestore/
   "method": "message/send",
   "params": {
     "message": {
+      "messageId": "req_001",
       "role": "user",
       "parts": [{
-        "type": "data",
+        "kind": "data",
         "data": {
           "skill": "score_articles",
-          "userId": "user_123",
-          "collectionId": "collection_user_123_20250115"
+          "user_id": "user_123",
+          "collection_id": "collection_user_123_20250115"
         }
       }]
     }
@@ -163,14 +167,15 @@ firestore/
   "method": "message/send",
   "params": {
     "message": {
+      "messageId": "req_002",
       "role": "user",
       "parts": [{
-        "type": "data",
+        "kind": "data",
         "data": {
           "skill": "research_article",
-          "userId": "user_123",
-          "collectionId": "collection_user_123_20250115",
-          "articleUrl": "https://example.com/article"
+          "user_id": "user_123",
+          "collection_id": "collection_user_123_20250115",
+          "article_url": "https://example.com/article"
         }
       }]
     }
@@ -180,16 +185,24 @@ firestore/
 ```
 
 #### Agent Card 例（Collector Agent）
+
+> `GET /.well-known/agent-card.json` で取得される。a2a-sdk の `AgentCard` / `AgentSkill` 型に準拠。
+
 ```json
 {
   "name": "Collector Agent",
-  "description": "RSS記事を収集しスコアリングを依頼するエージェント",
-  "url": "https://collector-agent-xxx.run.app",
+  "description": "RSS/Webサイトから記事を収集し、スコアリングを依頼するエージェント",
+  "url": "https://collector-agent-xxx.run.app/",
+  "version": "0.1.0",
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["text/plain"],
   "skills": [
     {
       "id": "collect_articles",
       "name": "記事収集",
-      "description": "ユーザーのRSSソースから記事を収集"
+      "description": "ユーザーのソース設定に基づいて記事を収集し、Librarianにスコアリングを依頼",
+      "tags": ["collector", "rss"],
+      "examples": ["記事を収集して"]
     }
   ],
   "capabilities": {

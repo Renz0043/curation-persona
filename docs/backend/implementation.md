@@ -30,16 +30,140 @@
 | カテゴリ | 技術 |
 |----------|------|
 | 言語 | Python 3.11+ |
-| Webフレームワーク | FastAPI + a2a-sdk |
+| Webフレームワーク | FastAPI + a2a-sdk (`pip install "a2a-sdk[http-server]"`) |
 | LLM SDK | google-genai (Vertex AI) |
-| エージェント間通信 | A2A Protocol (a2a-sdk) |
+| エージェント間通信 | A2A Protocol (a2a-sdk v0.3.22+) |
 | データベース | Cloud Firestore |
 
 ---
 
-## 2. 処理フロー
+## 2. アーキテクチャ（C4 Model）
 
-### 2.1 全体フロー図
+### 2.1 L2: Container（デプロイ単位）
+
+> システムを構成するデプロイ可能な単位と、その間の通信を示す。
+
+```mermaid
+graph TB
+    subgraph external ["外部システム"]
+        Scheduler["Cloud Scheduler<br/><i>毎朝 06:00 JST</i>"]
+        RSS["RSS Feeds<br/><i>外部ニュースソース</i>"]
+    end
+
+    subgraph gcp ["Google Cloud Platform"]
+        subgraph agents ["Agent Layer — Cloud Run"]
+            Collector["<b>Collector Agent</b><br/>Python / FastAPI<br/>Port 8001"]
+            Librarian["<b>Librarian Agent</b><br/>Python / FastAPI<br/>Port 8002"]
+            Researcher["<b>Researcher Agent</b><br/>Python / FastAPI<br/>Port 8003"]
+        end
+
+        Firestore[("<b>Cloud Firestore</b><br/>users/ collections/")]
+        VertexAI["<b>Vertex AI</b><br/>Gemini Flash / Pro"]
+    end
+
+    subgraph frontend ["Frontend"]
+        Dashboard["<b>Next.js Dashboard</b><br/>Firebase App Hosting"]
+    end
+
+    User(["ユーザー"])
+
+    Scheduler -- "HTTP POST /rpc" --> Collector
+    Collector -- "RSS取得" --> RSS
+    Collector -- "A2A: score_articles" --> Librarian
+    Collector -- "記事保存" --> Firestore
+    Librarian -- "プロファイル / スコア読み書き" --> Firestore
+    Librarian -- "LLMスコアリング" --> VertexAI
+    Dashboard -- "A2A: research_article" --> Researcher
+    Researcher -- "レポート読み書き" --> Firestore
+    Researcher -- "レポート生成" --> VertexAI
+    User -- "閲覧 / 評価 / 深掘りリクエスト" --> Dashboard
+    Dashboard -- "記事・評価読み書き" --> Firestore
+```
+
+**通信プロトコル一覧**
+
+| From | To | プロトコル | エンドポイント |
+|------|----|-----------|---------------|
+| Cloud Scheduler | Collector | HTTP POST (JSON-RPC) | `/rpc` |
+| Collector | Librarian | A2A (JSON-RPC) | `/rpc` |
+| Dashboard API | Researcher | A2A (JSON-RPC) | `/rpc` |
+| 各Agent | Firestore | gRPC (SDK) | — |
+| Librarian / Researcher | Vertex AI | REST (SDK) | — |
+| Dashboard | Firestore | REST (Firebase JS SDK) | — |
+
+### 2.2 L3: Component（Agent Layer 内部構成）
+
+> Agent Layer 内のモジュール依存関係を示す。各エージェントは `shared/` を共有する。
+
+```mermaid
+graph TB
+    subgraph shared ["shared/ — 共通モジュール"]
+        config["config.py<br/><i>BaseSettings</i>"]
+        models["models.py<br/><i>Pydantic モデル</i>"]
+        firestore_client["firestore_client.py<br/><i>Firestore CRUD</i>"]
+        a2a_client["a2a_client.py<br/><i>A2A 送信</i>"]
+        gemini_client["gemini_client.py<br/><i>Gemini Flash/Pro</i>"]
+        retry["retry.py<br/><i>指数バックオフ</i>"]
+
+        subgraph fetchers ["fetchers/"]
+            base["BaseFetcher<br/><i>ABC</i>"]
+            registry["FetcherRegistry"]
+            rss["RSSFetcher"]
+            website["WebsiteFetcher"]
+            newsletter["NewsletterFetcher"]
+        end
+    end
+
+    subgraph collector ["collector/"]
+        c_main["main.py<br/><i>A2AFastAPIApplication</i>"]
+        c_executor["agent_executor.py<br/><i>CollectorAgentExecutor</i>"]
+        c_service["service.py<br/><i>CollectorService</i>"]
+    end
+
+    subgraph librarian ["librarian/"]
+        l_main["main.py<br/><i>A2AFastAPIApplication</i>"]
+        l_executor["agent_executor.py<br/><i>LibrarianAgentExecutor</i>"]
+        l_service["service.py<br/><i>LibrarianService</i>"]
+        l_scorer["scorer.py<br/><i>ArticleScorer</i>"]
+    end
+
+    subgraph researcher ["researcher/"]
+        r_main["main.py<br/><i>A2AFastAPIApplication</i>"]
+        r_executor["agent_executor.py<br/><i>ResearcherAgentExecutor</i>"]
+        r_service["service.py<br/><i>ResearcherService</i>"]
+        r_report["report_generator.py<br/><i>ReportGenerator</i>"]
+    end
+
+    c_main --> c_executor --> c_service
+    c_service --> firestore_client
+    c_service --> a2a_client
+    c_service --> registry
+
+    l_main --> l_executor --> l_service
+    l_service --> firestore_client
+    l_service --> l_scorer
+    l_scorer --> gemini_client
+
+    r_main --> r_executor --> r_service
+    r_service --> firestore_client
+    r_service --> r_report
+    r_report --> gemini_client
+
+    registry --> base
+    rss --> base
+    website --> base
+    newsletter --> base
+
+    gemini_client --> config
+    firestore_client --> config
+    a2a_client --> config
+```
+
+---
+
+## 3. 処理フロー
+
+### 3.1 全体フロー図
 
 ```
 Cloud Scheduler (毎朝6時)
@@ -84,7 +208,7 @@ Cloud Scheduler (毎朝6時)
 └─────────────────────────────────────┘
 ```
 
-### 2.2 Dashboard での表示イメージ
+### 3.2 Dashboard での表示イメージ
 
 ```
 ┌─────────────────────────────────────┐
@@ -103,7 +227,7 @@ Cloud Scheduler (毎朝6時)
 
 ---
 
-## 3. プロジェクト構成
+## 4. プロジェクト構成
 
 ```
 services/agents/
@@ -124,23 +248,23 @@ services/agents/
 │       └── newsletter_fetcher.py  # メルマガ取得
 │
 ├── collector/                  # Collector Agent
-│   ├── main.py                # A2A Server エントリポイント
-│   ├── agent_card.py          # Agent Card 定義
+│   ├── main.py                # A2A Server エントリポイント（A2AFastAPIApplication）
+│   ├── agent_executor.py      # AgentExecutor 実装
 │   ├── service.py             # ビジネスロジック
 │   ├── Dockerfile
 │   └── requirements.txt
 │
 ├── librarian/                  # Librarian Agent
-│   ├── main.py                # A2A Server エントリポイント
-│   ├── agent_card.py          # Agent Card 定義
+│   ├── main.py                # A2A Server エントリポイント（A2AFastAPIApplication）
+│   ├── agent_executor.py      # AgentExecutor 実装
 │   ├── service.py             # ビジネスロジック
 │   ├── scorer.py              # 関連性スコアリング
 │   ├── Dockerfile
 │   └── requirements.txt
 │
 ├── researcher/                 # Researcher Agent
-│   ├── main.py                # A2A Server エントリポイント
-│   ├── agent_card.py          # Agent Card 定義
+│   ├── main.py                # A2A Server エントリポイント（A2AFastAPIApplication）
+│   ├── agent_executor.py      # AgentExecutor 実装
 │   ├── service.py             # ビジネスロジック
 │   ├── report_generator.py    # レポート生成
 │   ├── Dockerfile
@@ -151,9 +275,9 @@ services/agents/
 
 ---
 
-## 4. 共通モジュール (shared/)
+## 5. 共通モジュール (shared/)
 
-### 4.1 config.py - 環境変数管理
+### 5.1 config.py - 環境変数管理
 
 ```python
 from pydantic_settings import BaseSettings
@@ -184,7 +308,7 @@ class Settings(BaseSettings):
 settings = Settings()
 ```
 
-### 4.2 models.py - 共通データモデル
+### 5.2 models.py - 共通データモデル
 
 ```python
 from pydantic import BaseModel, Field
@@ -281,7 +405,7 @@ class ResearchArticleParams(BaseModel):
     article_url: str  # 記事を特定するためのURL
 ```
 
-### 4.3 retry.py - リトライユーティリティ
+### 5.3 retry.py - リトライユーティリティ
 
 ```python
 import asyncio
@@ -367,11 +491,11 @@ def with_retry(func: Callable[..., T]) -> Callable[..., T]:
     return wrapper
 ```
 
-### 4.4 fetchers/ - 記事取得モジュール
+### 5.4 fetchers/ - 記事取得モジュール
 
 記事ソースの種類（RSS、Webサイト、メルマガ等）に応じた取得ロジックを拡張可能な形で実装する。
 
-#### 4.4.1 base.py - 共通インターフェース
+#### 5.4.1 base.py - 共通インターフェース
 
 ```python
 from abc import ABC, abstractmethod
@@ -407,7 +531,7 @@ class BaseFetcher(ABC):
         pass
 ```
 
-#### 4.4.2 registry.py - Fetcherレジストリ
+#### 5.4.2 registry.py - Fetcherレジストリ
 
 ```python
 import logging
@@ -442,7 +566,7 @@ class FetcherRegistry:
         return fetcher
 ```
 
-#### 4.4.3 rss_fetcher.py - RSS取得
+#### 5.4.3 rss_fetcher.py - RSS取得
 
 ```python
 import feedparser
@@ -505,7 +629,7 @@ class RSSFetcher(BaseFetcher):
             return None
 ```
 
-#### 4.4.4 website_fetcher.py - Webサイト監視（MVP後に実装）
+#### 5.4.4 website_fetcher.py - Webサイト監視（MVP後に実装）
 
 ```python
 import httpx
@@ -558,7 +682,7 @@ class WebsiteFetcher(BaseFetcher):
         return articles
 ```
 
-#### 4.4.5 newsletter_fetcher.py - メルマガ取得（MVP後に実装）
+#### 5.4.5 newsletter_fetcher.py - メルマガ取得（MVP後に実装）
 
 ```python
 import logging
@@ -584,7 +708,7 @@ class NewsletterFetcher(BaseFetcher):
         return []
 ```
 
-#### 4.4.6 __init__.py - レジストリ初期化
+#### 5.4.6 __init__.py - レジストリ初期化
 
 ```python
 from .registry import FetcherRegistry
@@ -605,9 +729,9 @@ __all__ = ["fetcher_registry", "FetcherRegistry", "BaseFetcher"]
 
 ---
 
-## 5. Collector Agent
+## 6. Collector Agent
 
-### 5.1 責務
+### 6.1 責務
 
 - Cloud Scheduler からのトリガー受信
 - **複数ソース（RSS、Webサイト、メルマガ等）から記事を収集**
@@ -615,70 +739,112 @@ __all__ = ["fetcher_registry", "FetcherRegistry", "BaseFetcher"]
 - **Firestoreに全記事を保存**（scoring_status: PENDING）
 - **A2AでLibrarianにスコアリング依頼**（score_articles スキル）
 
-### 5.2 main.py - A2A Server エントリポイント
+### 6.2 main.py - A2A Server エントリポイント
+
+> a2a-sdk v0.3.22+ の `A2AFastAPIApplication` を使用。Agent Card定義もここに含める。
 
 ```python
-from a2a import A2AServer, AgentCard, Skill, Task
+from a2a.server.apps import A2AFastAPIApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.types import AgentCard, AgentSkill, AgentCapabilities
 from fastapi import FastAPI
+import uvicorn
+
+from .agent_executor import CollectorAgentExecutor
+
+def create_app() -> FastAPI:
+    # Agent Card 定義
+    skill = AgentSkill(
+        id="collect_articles",
+        name="記事収集",
+        description="ユーザーのソース設定に基づいて記事を収集し、Librarianにスコアリングを依頼",
+        tags=["collector", "rss"],
+        examples=["記事を収集して"],
+    )
+    agent_card = AgentCard(
+        name="Collector Agent",
+        description="RSS/Webサイトから記事を収集し、スコアリングを依頼するエージェント",
+        url="http://localhost:8001/",  # デプロイ時に環境変数で上書き
+        version="0.1.0",
+        defaultInputModes=["text/plain"],
+        defaultOutputModes=["text/plain"],
+        capabilities=AgentCapabilities(streaming=False),
+        skills=[skill],
+    )
+
+    # A2A Server 構築
+    handler = DefaultRequestHandler(
+        agent_executor=CollectorAgentExecutor(),
+        task_store=InMemoryTaskStore(),
+    )
+    a2a_app = A2AFastAPIApplication(
+        agent_card=agent_card,
+        http_handler=handler,
+    )
+    app: FastAPI = a2a_app.build()
+
+    @app.get("/health")
+    async def health():
+        return {"status": "healthy"}
+
+    return app
+
+app = create_app()
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8001)
+```
+
+### 6.2.1 agent_executor.py - AgentExecutor 実装
+
+> `AgentExecutor` は a2a-sdk の抽象基底クラス。`execute()` でビジネスロジックを実行し、`EventQueue` にレスポンスを発行する。
+
+```python
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
+from a2a.types import DataPart
+from a2a.utils import new_agent_text_message
 import logging
 
-from .agent_card import agent_card
 from .service import CollectorService
 
 logger = logging.getLogger(__name__)
-
-# A2A Server 初期化
-server = A2AServer(agent_card)
 service = CollectorService()
 
-@server.skill("collect_articles")
-async def collect_articles(task: Task) -> Task:
-    """記事収集スキル（Cloud Scheduler からトリガー）"""
-    params = task.message.parts[0].data
-    user_id = params["user_id"]
+class CollectorAgentExecutor(AgentExecutor):
+    """Collector Agent の A2A リクエストハンドラ"""
 
-    logger.info(f"Starting article collection for user: {user_id}")
+    async def execute(
+        self, context: RequestContext, event_queue: EventQueue
+    ) -> None:
+        # リクエストメッセージからパラメータを取得
+        params = {}
+        if context.request and context.request.message:
+            for part in context.request.message.parts:
+                if hasattr(part, 'root') and isinstance(part.root, DataPart):
+                    params = part.root.data
+                    break
 
-    result = await service.execute(user_id)
+        user_id = params.get("user_id", "")
+        logger.info(f"Starting article collection for user: {user_id}")
 
-    return task.complete(artifact={
-        "collection_id": result["collection_id"],
-        "articles_total": result["articles_total"]
-    })
+        result = await service.execute(user_id)
 
-# FastAPI アプリとしてマウント
-app = FastAPI(title="Collector Agent")
-app.mount("/", server.app)
-
-@app.get("/health")
-async def health():
-    return {"status": "healthy"}
-```
-
-### 5.2.1 agent_card.py - Agent Card 定義
-
-```python
-from a2a import AgentCard, Skill
-
-agent_card = AgentCard(
-    name="Collector Agent",
-    description="RSS/Webサイトから記事を収集し、スコアリングを依頼するエージェント",
-    url="https://collector-agent-xxx.run.app",
-    skills=[
-        Skill(
-            id="collect_articles",
-            name="記事収集",
-            description="ユーザーのソース設定に基づいて記事を収集し、Librarianにスコアリングを依頼"
+        event_queue.enqueue_event(
+            new_agent_text_message(
+                f"Collection completed: {result['articles_total']} articles collected "
+                f"(collection_id: {result['collection_id']})"
+            )
         )
-    ],
-    capabilities={
-        "streaming": False,
-        "pushNotifications": False
-    }
-)
+
+    async def cancel(
+        self, context: RequestContext, event_queue: EventQueue
+    ) -> None:
+        raise NotImplementedError("cancel not supported")
 ```
 
-### 5.3 service.py - ビジネスロジック
+### 6.3 service.py - ビジネスロジック
 
 ```python
 from datetime import datetime
@@ -802,9 +968,9 @@ class CollectorService:
 
 ---
 
-## 6. Librarian Agent
+## 7. Librarian Agent
 
-### 6.1 責務
+### 7.1 責務
 
 - **A2A（score_articles スキル）でCollectorからトリガー受信**
 - **Firestoreから記事を読み取り**
@@ -814,71 +980,105 @@ class CollectorService:
 - **ピックアップ判定**（上位N件をマーク）
 - **コールドスタート対応**（評価データ不足時はスコア0.5固定）
 
-### 6.2 main.py - A2A Server エントリポイント
+### 7.2 main.py - A2A Server エントリポイント
 
 ```python
-from a2a import A2AServer, Task
+from a2a.server.apps import A2AFastAPIApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.types import AgentCard, AgentSkill, AgentCapabilities
 from fastapi import FastAPI
+import uvicorn
+
+from .agent_executor import LibrarianAgentExecutor
+
+def create_app() -> FastAPI:
+    skill = AgentSkill(
+        id="score_articles",
+        name="記事スコアリング",
+        description="コレクション内の全記事にユーザー評価ベースの関連性スコアを付与",
+        tags=["librarian", "scoring"],
+        examples=["記事をスコアリングして"],
+    )
+    agent_card = AgentCard(
+        name="Librarian Agent",
+        description="ユーザー評価ベースのLLMスコアリングで記事に関連性スコアを付与するエージェント",
+        url="http://localhost:8002/",
+        version="0.1.0",
+        defaultInputModes=["text/plain"],
+        defaultOutputModes=["text/plain"],
+        capabilities=AgentCapabilities(streaming=False),
+        skills=[skill],
+    )
+
+    handler = DefaultRequestHandler(
+        agent_executor=LibrarianAgentExecutor(),
+        task_store=InMemoryTaskStore(),
+    )
+    a2a_app = A2AFastAPIApplication(
+        agent_card=agent_card,
+        http_handler=handler,
+    )
+    app: FastAPI = a2a_app.build()
+
+    @app.get("/health")
+    async def health():
+        return {"status": "healthy"}
+
+    return app
+
+app = create_app()
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8002)
+```
+
+### 7.2.1 agent_executor.py - AgentExecutor 実装
+
+```python
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
+from a2a.types import DataPart
+from a2a.utils import new_agent_text_message
 import logging
 
-from .agent_card import agent_card
 from .service import LibrarianService
 
 logger = logging.getLogger(__name__)
-
-# A2A Server 初期化
-server = A2AServer(agent_card)
 service = LibrarianService()
 
-@server.skill("score_articles")
-async def score_articles(task: Task) -> Task:
-    """記事スコアリングスキル（Collector から呼び出し）"""
-    params = task.message.parts[0].data
-    user_id = params["user_id"]
-    collection_id = params["collection_id"]
+class LibrarianAgentExecutor(AgentExecutor):
+    """Librarian Agent の A2A リクエストハンドラ"""
 
-    logger.info(f"Starting scoring for collection: {collection_id}")
+    async def execute(
+        self, context: RequestContext, event_queue: EventQueue
+    ) -> None:
+        params = {}
+        if context.request and context.request.message:
+            for part in context.request.message.parts:
+                if hasattr(part, 'root') and isinstance(part.root, DataPart):
+                    params = part.root.data
+                    break
 
-    await service.score_collection(user_id, collection_id)
+        user_id = params.get("user_id", "")
+        collection_id = params.get("collection_id", "")
+        logger.info(f"Starting scoring for collection: {collection_id}")
 
-    return task.complete(artifact={
-        "collection_id": collection_id,
-        "status": "scored"
-    })
+        await service.score_collection(user_id, collection_id)
 
-# FastAPI アプリとしてマウント
-app = FastAPI(title="Librarian Agent")
-app.mount("/", server.app)
-
-@app.get("/health")
-async def health():
-    return {"status": "healthy"}
-```
-
-### 6.2.1 agent_card.py - Agent Card 定義
-
-```python
-from a2a import AgentCard, Skill
-
-agent_card = AgentCard(
-    name="Librarian Agent",
-    description="ユーザー評価ベースのLLMスコアリングで記事に関連性スコアを付与するエージェント",
-    url="https://librarian-agent-xxx.run.app",
-    skills=[
-        Skill(
-            id="score_articles",
-            name="記事スコアリング",
-            description="コレクション内の全記事にユーザー評価ベースの関連性スコアを付与"
+        event_queue.enqueue_event(
+            new_agent_text_message(
+                f"Scoring completed for collection: {collection_id}"
+            )
         )
-    ],
-    capabilities={
-        "streaming": False,
-        "pushNotifications": False
-    }
-)
+
+    async def cancel(
+        self, context: RequestContext, event_queue: EventQueue
+    ) -> None:
+        raise NotImplementedError("cancel not supported")
 ```
 
-### 6.3 service.py - ビジネスロジック
+### 7.3 service.py - ビジネスロジック
 
 ```python
 import asyncio
@@ -1043,7 +1243,7 @@ class LibrarianService:
         return article
 ```
 
-### 6.4 scorer.py - LLMベーススコアリングロジック
+### 7.4 scorer.py - LLMベーススコアリングロジック
 
 ```python
 from typing import NamedTuple
@@ -1105,9 +1305,9 @@ class ArticleScorer:
 
 ---
 
-## 7. Researcher Agent
+## 8. Researcher Agent
 
-### 7.1 責務
+### 8.1 責務
 
 - **A2A（research_article スキル）でDashboard APIからトリガー受信（ユーザー手動リクエスト）**
 - **Firestoreから対象記事を読み取り**
@@ -1115,71 +1315,105 @@ class ArticleScorer:
 - Gemini Pro による深掘りレポート生成
 - **Firestoreにレポート保存**（research_status: COMPLETED）
 
-### 7.2 main.py - A2A Server エントリポイント
+### 8.2 main.py - A2A Server エントリポイント
 
 ```python
-from a2a import A2AServer, Task
+from a2a.server.apps import A2AFastAPIApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore
+from a2a.types import AgentCard, AgentSkill, AgentCapabilities
 from fastapi import FastAPI
+import uvicorn
+
+from .agent_executor import ResearcherAgentExecutor
+
+def create_app() -> FastAPI:
+    skill = AgentSkill(
+        id="research_article",
+        name="記事詳細調査",
+        description="記事の深掘りレポートをGemini Proで生成",
+        tags=["researcher", "deep-dive"],
+        examples=["この記事を深掘りして"],
+    )
+    agent_card = AgentCard(
+        name="Researcher Agent",
+        description="ピックアップ記事の詳細調査レポートを生成するエージェント",
+        url="http://localhost:8003/",
+        version="0.1.0",
+        defaultInputModes=["text/plain"],
+        defaultOutputModes=["text/plain"],
+        capabilities=AgentCapabilities(streaming=False),
+        skills=[skill],
+    )
+
+    handler = DefaultRequestHandler(
+        agent_executor=ResearcherAgentExecutor(),
+        task_store=InMemoryTaskStore(),
+    )
+    a2a_app = A2AFastAPIApplication(
+        agent_card=agent_card,
+        http_handler=handler,
+    )
+    app: FastAPI = a2a_app.build()
+
+    @app.get("/health")
+    async def health():
+        return {"status": "healthy"}
+
+    return app
+
+app = create_app()
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8003)
+```
+
+### 8.2.1 agent_executor.py - AgentExecutor 実装
+
+```python
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
+from a2a.types import DataPart
+from a2a.utils import new_agent_text_message
 import logging
 
-from .agent_card import agent_card
 from .service import ResearcherService
 from shared.models import ResearchArticleParams
 
 logger = logging.getLogger(__name__)
-
-# A2A Server 初期化
-server = A2AServer(agent_card)
 service = ResearcherService()
 
-@server.skill("research_article")
-async def research_article(task: Task) -> Task:
-    """記事詳細調査スキル（Dashboard API から手動トリガー）"""
-    params = task.message.parts[0].data
-    research_params = ResearchArticleParams(**params)
+class ResearcherAgentExecutor(AgentExecutor):
+    """Researcher Agent の A2A リクエストハンドラ"""
 
-    logger.info(f"Starting research for article: {research_params.article_url}")
+    async def execute(
+        self, context: RequestContext, event_queue: EventQueue
+    ) -> None:
+        params = {}
+        if context.request and context.request.message:
+            for part in context.request.message.parts:
+                if hasattr(part, 'root') and isinstance(part.root, DataPart):
+                    params = part.root.data
+                    break
 
-    await service.research(research_params)
+        research_params = ResearchArticleParams(**params)
+        logger.info(f"Starting research for article: {research_params.article_url}")
 
-    return task.complete(artifact={
-        "article_url": research_params.article_url,
-        "status": "completed"
-    })
+        await service.research(research_params)
 
-# FastAPI アプリとしてマウント
-app = FastAPI(title="Researcher Agent")
-app.mount("/", server.app)
-
-@app.get("/health")
-async def health():
-    return {"status": "healthy"}
-```
-
-### 7.2.1 agent_card.py - Agent Card 定義
-
-```python
-from a2a import AgentCard, Skill
-
-agent_card = AgentCard(
-    name="Researcher Agent",
-    description="ピックアップ記事の詳細調査レポートを生成するエージェント",
-    url="https://researcher-agent-xxx.run.app",
-    skills=[
-        Skill(
-            id="research_article",
-            name="記事詳細調査",
-            description="記事の深掘りレポートをGemini Proで生成"
+        event_queue.enqueue_event(
+            new_agent_text_message(
+                f"Research completed for: {research_params.article_url}"
+            )
         )
-    ],
-    capabilities={
-        "streaming": False,
-        "pushNotifications": False
-    }
-)
+
+    async def cancel(
+        self, context: RequestContext, event_queue: EventQueue
+    ) -> None:
+        raise NotImplementedError("cancel not supported")
 ```
 
-### 7.3 service.py - ビジネスロジック
+### 8.3 service.py - ビジネスロジック
 
 ```python
 import logging
@@ -1238,7 +1472,7 @@ class ResearcherService:
         logger.info(f"Research completed for: {article.title}")
 ```
 
-### 7.4 report_generator.py - レポート生成
+### 8.4 report_generator.py - レポート生成
 
 ```python
 from shared.gemini_client import GeminiClient
@@ -1306,9 +1540,9 @@ class ReportGenerator:
 
 ---
 
-## 8. 共通クライアント実装
+## 9. 共通クライアント実装
 
-### 8.1 gemini_client.py
+### 9.1 gemini_client.py
 
 ```python
 from google import genai
@@ -1358,11 +1592,19 @@ class GeminiClient:
         return response.embeddings[0].values
 ```
 
-### 8.2 a2a_client.py
+### 9.2 a2a_client.py
+
+> a2a-sdk v0.3.22+ の `A2AClient` + `A2ACardResolver` を使用。
 
 ```python
-from a2a import A2AClient as BaseA2AClient, Message, Part
+import httpx
+import uuid
 import logging
+from a2a.client import A2AClient as BaseA2AClient, A2ACardResolver
+from a2a.types import (
+    Message, Part, TextPart, DataPart,
+    MessageSendParams, SendMessageRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1384,26 +1626,46 @@ class A2AClient:
             params: スキルに渡すパラメータ
 
         Returns:
-            Task の完了結果
+            レスポンスメッセージの辞書
         """
-        client = BaseA2AClient(agent_url)
+        async with httpx.AsyncClient(timeout=300.0) as http_client:
+            # Agent Card を取得してクライアントを初期化
+            resolver = A2ACardResolver(
+                httpx_client=http_client,
+                base_url=agent_url,
+            )
+            agent_card = await resolver.get_agent_card()
+            client = BaseA2AClient(
+                httpx_client=http_client,
+                agent_card=agent_card,
+            )
 
-        message = Message(
-            role="user",
-            parts=[Part(type="data", data={"skill": skill, **params})]
-        )
+            # A2A メッセージを構築
+            message = Message(
+                messageId=str(uuid.uuid4()),
+                role="user",
+                parts=[
+                    Part(root=DataPart(data={"skill": skill, **params}))
+                ],
+            )
 
-        task = await client.send_message(message)
+            request = SendMessageRequest(
+                id=str(uuid.uuid4()),
+                params=MessageSendParams(message=message),
+            )
 
-        logger.info(f"A2A message sent to {agent_url}, task_id: {task.id}")
+            # メッセージ送信（同期応答を待機）
+            response = await client.send_message(request)
 
-        # タスク完了を待機（同期的に処理）
-        completed_task = await client.wait_for_completion(task.id)
+            logger.info(
+                f"A2A message sent to {agent_url} "
+                f"(skill={skill})"
+            )
 
-        return completed_task.artifact
+            return response
 ```
 
-### 8.3 firestore_client.py
+### 9.3 firestore_client.py
 
 ```python
 from google.cloud import firestore
@@ -1566,29 +1828,15 @@ class FirestoreClient:
         return False
 ```
 
-### 8.3 http_client.py
+### ~~8.3 http_client.py~~ （廃止）
 
-```python
-import httpx
-from typing import Any
-
-class HttpClient:
-    def __init__(self, timeout: float = 30.0):
-        self.timeout = timeout
-
-    async def post(self, url: str, data: dict) -> Any:
-        """POST リクエストを送信"""
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(url, json=data)
-            response.raise_for_status()
-            return response.json()
-```
+> a2a_client.py が httpx を内部で使用するため、独立した HttpClient は不要。直接 httpx を使う場合は各モジュールで `httpx.AsyncClient` を利用する。
 
 ---
 
-## 9. デプロイ
+## 10. デプロイ
 
-### 9.1 Dockerfile (共通テンプレート)
+### 10.1 Dockerfile (共通テンプレート)
 
 ```dockerfile
 FROM python:3.11-slim
@@ -1610,7 +1858,7 @@ EXPOSE 8080
 CMD ["uvicorn", "collector.main:app", "--host", "0.0.0.0", "--port", "8080"]
 ```
 
-### 9.2 Cloud Run デプロイコマンド
+### 10.2 Cloud Run デプロイコマンド
 
 ```bash
 # Collector Agent
@@ -1635,7 +1883,7 @@ gcloud run deploy researcher-agent \
   --set-env-vars "GOOGLE_CLOUD_PROJECT=curation-persona"
 ```
 
-### 9.3 Cloud Scheduler 設定（A2A トリガー）
+### 10.3 Cloud Scheduler 設定（A2A トリガー）
 
 ```bash
 # 毎朝6時にCollector Agentをトリガー
@@ -1643,7 +1891,7 @@ gcloud scheduler jobs create http collect-daily \
   --location asia-northeast1 \
   --schedule "0 6 * * *" \
   --time-zone "Asia/Tokyo" \
-  --uri "https://collector-agent-xxx.run.app/a2a" \
+  --uri "https://collector-agent-xxx.run.app/rpc" \
   --http-method POST \
   --headers "Content-Type=application/json" \
   --message-body '{
@@ -1651,9 +1899,10 @@ gcloud scheduler jobs create http collect-daily \
     "method": "message/send",
     "params": {
       "message": {
+        "messageId": "scheduler-trigger-001",
         "role": "user",
         "parts": [{
-          "type": "data",
+          "kind": "data",
           "data": {
             "skill": "collect_articles",
             "user_id": "user_123"
@@ -1669,9 +1918,9 @@ gcloud scheduler jobs create http collect-daily \
 
 ---
 
-## 10. テスト戦略
+## 11. テスト戦略
 
-### 10.1 テスト構成
+### 11.1 テスト構成
 
 ```
 services/agents/
@@ -1687,7 +1936,7 @@ services/agents/
     └── conftest.py
 ```
 
-### 10.2 ユニットテスト例
+### 11.2 ユニットテスト例
 
 ```python
 # tests/unit/test_scorer.py
@@ -1722,7 +1971,7 @@ async def test_scorer_with_profile(mock_gemini):
     assert "AI" in result.reason
 ```
 
-### 10.3 ローカル実行
+### 11.3 ローカル実行
 
 ```bash
 # テスト実行
@@ -1735,15 +1984,15 @@ pytest tests/ --cov=. --cov-report=html
 
 ---
 
-## 11. 開発環境セットアップ
+## 12. 開発環境セットアップ
 
-### 11.1 前提条件
+### 12.1 前提条件
 
 - Python 3.11+
 - Google Cloud SDK
 - Docker (オプション)
 
-### 11.2 セットアップ手順
+### 12.2 セットアップ手順
 
 ```bash
 # 1. リポジトリクローン
@@ -1756,6 +2005,7 @@ source .venv/bin/activate
 
 # 3. 依存関係インストール
 pip install -e ".[dev]"
+# Note: a2a-sdk[http-server] が pyproject.toml に含まれている
 
 # 4. 環境変数設定
 cp .env.example .env
@@ -1768,9 +2018,13 @@ gcloud auth application-default login
 uvicorn collector.main:app --reload --port 8001
 uvicorn librarian.main:app --reload --port 8002
 uvicorn researcher.main:app --reload --port 8003
+
+# 7. 疎通確認
+curl http://localhost:8001/.well-known/agent-card.json  # Agent Card 取得
+curl http://localhost:8001/health                       # ヘルスチェック
 ```
 
-### 11.3 .env.example
+### 12.3 .env.example
 
 ```bash
 GOOGLE_CLOUD_PROJECT=curation-persona
