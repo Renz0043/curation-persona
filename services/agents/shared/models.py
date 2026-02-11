@@ -23,6 +23,7 @@ class ResearchStatus(str, Enum):
     PENDING = "pending"
     RESEARCHING = "researching"
     COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class SourceType(str, Enum):

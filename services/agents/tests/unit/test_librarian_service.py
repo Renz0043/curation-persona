@@ -1,6 +1,8 @@
 from datetime import datetime
 from unittest.mock import AsyncMock
 
+import pytest
+
 from librarian.scorer import ArticleScorer
 from librarian.service import LibrarianService
 from shared.models import (
@@ -169,3 +171,35 @@ class Test_LibrarianService:
         mock_gemini_client.generate_json.assert_not_called()
         # デフォルトスコア
         assert collection.articles[0].relevance_score == 0.5
+
+    async def test_スコアリング例外時にFAILEDステータスに遷移する(
+        self, mock_firestore_client, mock_gemini_client
+    ):
+        articles = [_make_article()]
+        collection = _make_collection(articles)
+        mock_firestore_client.get_collection.return_value = collection
+
+        # プロファイルあり
+        mock_firestore_client.get_user.return_value = {
+            "user_id": "user_1",
+            "interestProfile": "AI技術に関心がある",
+            "interestProfileUpdatedAt": datetime(2025, 1, 1),
+        }
+        mock_firestore_client.has_new_ratings_since.return_value = False
+        mock_gemini_client.generate_json.return_value = {"score": 0.7, "reason": "ok"}
+
+        # Firestore更新で例外発生（scorer は例外を吸収するため、後続処理で発火）
+        mock_firestore_client.update_collection_articles.side_effect = RuntimeError("Firestore error")
+
+        service = self._make_service(mock_firestore_client, mock_gemini_client)
+
+        with pytest.raises(RuntimeError, match="Firestore error"):
+            await service.score_collection("user_1", "col_1")
+
+        # SCORING → FAILED の遷移を確認
+        mock_firestore_client.update_collection_status.assert_any_call(
+            "col_1", CollectionStatus.SCORING
+        )
+        mock_firestore_client.update_collection_status.assert_any_call(
+            "col_1", CollectionStatus.FAILED
+        )

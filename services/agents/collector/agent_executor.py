@@ -5,10 +5,17 @@ from a2a.server.events import EventQueue
 from a2a.types import DataPart
 from a2a.utils import new_agent_text_message
 
+from shared.a2a_client import A2AClient
+from shared.fetchers import fetcher_registry
+from shared.firestore_client import FirestoreClient
+
 from .service import CollectorService
 
 logger = logging.getLogger(__name__)
-service = CollectorService()
+
+firestore = FirestoreClient()
+a2a_client = A2AClient()
+service = CollectorService(firestore, a2a_client, fetcher_registry)
 
 
 class CollectorAgentExecutor(AgentExecutor):

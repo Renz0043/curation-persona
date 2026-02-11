@@ -1,3 +1,4 @@
+from .base import BaseFetcher
 from .newsletter_fetcher import NewsletterFetcher
 from .registry import FetcherRegistry
 from .rss_fetcher import RSSFetcher
