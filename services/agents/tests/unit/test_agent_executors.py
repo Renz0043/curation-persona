@@ -13,7 +13,7 @@ def _make_context(params: dict):
         role="user",
         parts=[Part(root=DataPart(data=params))],
     )
-    context.request.message = message
+    context.message = message
     return context
 
 
@@ -50,9 +50,9 @@ class Test_CollectorAgentExecutor:
         )
 
         executor = CollectorAgentExecutor()
-        # DataPart なしのメッセージ
+        # message が None のコンテキスト
         context = MagicMock()
-        context.request.message.parts = []
+        context.message = None
         queue = _make_event_queue()
 
         await executor.execute(context, queue)
