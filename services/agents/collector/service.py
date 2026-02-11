@@ -63,6 +63,7 @@ class CollectorService:
                 url=article.url,
                 source=article.source,
                 source_type=article.source_type,
+                summary=article.summary,
                 content=article.content,
                 published_at=article.published_at,
                 scoring_status=ScoringStatus.PENDING,

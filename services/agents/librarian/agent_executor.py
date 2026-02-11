@@ -7,6 +7,7 @@ from a2a.utils import new_agent_text_message
 
 from shared.firestore_client import FirestoreClient
 from shared.gemini_client import GeminiClient
+from shared.scraper import WebScraper
 
 from .scorer import ArticleScorer
 from .service import LibrarianService
@@ -16,7 +17,8 @@ logger = logging.getLogger(__name__)
 firestore = FirestoreClient()
 gemini_client = GeminiClient("flash")
 scorer = ArticleScorer(gemini_client)
-service = LibrarianService(firestore, gemini_client, scorer)
+scraper = WebScraper()
+service = LibrarianService(firestore, gemini_client, scorer, scraper)
 
 
 class LibrarianAgentExecutor(AgentExecutor):
@@ -24,8 +26,8 @@ class LibrarianAgentExecutor(AgentExecutor):
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
         params = {}
-        if context.request and context.request.message:
-            for part in context.request.message.parts:
+        if context.message:
+            for part in context.message.parts:
                 if hasattr(part, "root") and isinstance(part.root, DataPart):
                     params = part.root.data
                     break

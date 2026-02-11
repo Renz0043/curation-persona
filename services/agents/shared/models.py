@@ -46,6 +46,7 @@ class Article(BaseModel):
     url: str
     source: str
     source_type: SourceType
+    summary: Optional[str] = None
     content: Optional[str] = None
     published_at: Optional[datetime] = None
 

@@ -23,8 +23,8 @@ class CollectorAgentExecutor(AgentExecutor):
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
         params = {}
-        if context.request and context.request.message:
-            for part in context.request.message.parts:
+        if context.message:
+            for part in context.message.parts:
                 if hasattr(part, "root") and isinstance(part.root, DataPart):
                     params = part.root.data
                     break

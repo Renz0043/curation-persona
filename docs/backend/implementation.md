@@ -103,6 +103,7 @@ graph TB
         firestore_client["firestore_client.py<br/><i>Firestore CRUD</i>"]
         a2a_client["a2a_client.py<br/><i>A2A 送信</i>"]
         gemini_client["gemini_client.py<br/><i>Gemini Flash/Pro</i>"]
+        scraper["scraper.py<br/><i>WebScraper（コンテンツ補完）</i>"]
         retry["retry.py<br/><i>指数バックオフ</i>"]
 
         subgraph fetchers ["fetchers/"]
@@ -142,6 +143,7 @@ graph TB
     l_main --> l_executor --> l_service
     l_service --> firestore_client
     l_service --> l_scorer
+    l_service --> scraper
     l_scorer --> gemini_client
 
     r_main --> r_executor --> r_service
@@ -183,10 +185,12 @@ Cloud Scheduler (毎朝6時)
 │  - 過去の高評価記事（4-5★）を取得    │
 │  - Gemini Flashで興味プロファイル生成 │
 │  - 全記事にLLMベーススコア付与       │
-│  - Firestoreにスコア書き戻し         │
-│    (scoring_status: SCORED)         │
 │  - 上位N件をピックアップとしてマーク  │
 │    (is_pickup: true)                │
+│  - 上位10件のコンテンツ補完          │
+│    (WebScraper / robots.txt準拠)    │
+│  - Firestoreにスコア書き戻し         │
+│    (scoring_status: SCORED)         │
 └─────────────────────────────────────┘
     │
     │ Firestore: スコア更新
@@ -238,6 +242,7 @@ services/agents/
 │   ├── a2a_client.py          # A2A通信クライアント
 │   ├── gemini_client.py       # Gemini API操作
 │   ├── models.py              # Pydanticモデル定義
+│   ├── scraper.py             # Webスクレイピング（コンテンツ補完）
 │   ├── retry.py               # リトライユーティリティ
 │   └── fetchers/              # 記事取得モジュール（拡張可能）
 │       ├── __init__.py
@@ -301,6 +306,10 @@ class Settings(BaseSettings):
     # スコアリング設定
     min_ratings_for_scoring: int = 3  # スコアリングに必要な最低評価数
     high_rating_threshold: int = 4     # 高評価とみなす最低評価値（4-5★）
+
+    # スクレイピング設定
+    scrape_max_count: int = 10         # コンテンツ補完対象の上位記事数
+    scrape_delay_sec: float = 2.0      # 逐次取得の待機秒数
 
     class Config:
         env_file = ".env"
@@ -820,8 +829,8 @@ class CollectorAgentExecutor(AgentExecutor):
     ) -> None:
         # リクエストメッセージからパラメータを取得
         params = {}
-        if context.request and context.request.message:
-            for part in context.request.message.parts:
+        if context.message:
+            for part in context.message.parts:
                 if hasattr(part, 'root') and isinstance(part.root, DataPart):
                     params = part.root.data
                     break
@@ -1042,10 +1051,19 @@ from a2a.types import DataPart
 from a2a.utils import new_agent_text_message
 import logging
 
+from shared.firestore_client import FirestoreClient
+from shared.gemini_client import GeminiClient
+from shared.scraper import WebScraper
+from .scorer import ArticleScorer
 from .service import LibrarianService
 
 logger = logging.getLogger(__name__)
-service = LibrarianService()
+
+firestore = FirestoreClient()
+gemini_client = GeminiClient("flash")
+scorer = ArticleScorer(gemini_client)
+scraper = WebScraper()
+service = LibrarianService(firestore, gemini_client, scorer, scraper)
 
 class LibrarianAgentExecutor(AgentExecutor):
     """Librarian Agent の A2A リクエストハンドラ"""
@@ -1054,8 +1072,8 @@ class LibrarianAgentExecutor(AgentExecutor):
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
         params = {}
-        if context.request and context.request.message:
-            for part in context.request.message.parts:
+        if context.message:
+            for part in context.message.parts:
                 if hasattr(part, 'root') and isinstance(part.root, DataPart):
                     params = part.root.data
                     break
@@ -1090,13 +1108,22 @@ from shared.firestore_client import FirestoreClient
 from shared.models import (
     ScoredArticle, ScoringStatus, ResearchStatus, CollectionStatus
 )
+from shared.scraper import WebScraper
 
 logger = logging.getLogger(__name__)
 
 class LibrarianService:
-    def __init__(self):
-        self.gemini = GeminiClient(model="flash")
-        self.firestore = FirestoreClient()
+    def __init__(
+        self,
+        firestore: FirestoreClient,
+        gemini_client: GeminiClient,
+        scorer: ArticleScorer,
+        scraper: WebScraper,
+    ):
+        self.firestore = firestore
+        self.gemini_client = gemini_client
+        self.scorer = scorer
+        self.scraper = scraper
 
     async def score_collection(self, user_id: str, collection_id: str):
         """コレクション内の全記事にスコアを付与"""
@@ -1142,7 +1169,14 @@ class LibrarianService:
                 article.is_pickup = True
                 article.research_status = ResearchStatus.PENDING
 
-        # 8. Firestoreに書き戻し
+        # 8. 上位記事のコンテンツ補完（スクレイピング）
+        await self.scraper.scrape_articles(
+            collection.articles,
+            max_count=settings.scrape_max_count,
+            delay=settings.scrape_delay_sec,
+        )
+
+        # 9. Firestoreに書き戻し
         await self.firestore.update_collection_articles(collection_id, collection.articles)
 
         # 9. コレクションステータスを完了に更新（Researcherは手動トリガーのため）
@@ -1390,8 +1424,8 @@ class ResearcherAgentExecutor(AgentExecutor):
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
         params = {}
-        if context.request and context.request.message:
-            for part in context.request.message.parts:
+        if context.message:
+            for part in context.message.parts:
                 if hasattr(part, 'root') and isinstance(part.root, DataPart):
                     params = part.root.data
                     break
@@ -2036,4 +2070,6 @@ GEMINI_PRO_MODEL=gemini-2.5-pro
 PICKUP_COUNT=2
 MIN_RATINGS_FOR_SCORING=3
 HIGH_RATING_THRESHOLD=4
+SCRAPE_MAX_COUNT=10
+SCRAPE_DELAY_SEC=2.0
 ```

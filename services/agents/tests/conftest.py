@@ -52,6 +52,19 @@ def mock_a2a_client():
 
 
 @pytest.fixture
+def mock_scraper():
+    """WebScraper のモックフィクスチャ"""
+    from unittest.mock import AsyncMock
+
+    from shared.scraper import WebScraper
+
+    scraper = WebScraper.__new__(WebScraper)
+    scraper.scrape_articles = AsyncMock()
+    scraper.scrape = AsyncMock(return_value=None)
+    return scraper
+
+
+@pytest.fixture
 def mock_fetcher_registry():
     """FetcherRegistry のモックフィクスチャ"""
     from unittest.mock import AsyncMock, MagicMock
