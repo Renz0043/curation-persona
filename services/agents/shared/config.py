@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     min_ratings_for_scoring: int = 3
     high_rating_threshold: int = 4
 
+    # スクレイピング設定
+    scrape_max_count: int = 10
+    scrape_delay_sec: float = 2.0
+
     model_config = {"env_file": ".env"}
 
 
