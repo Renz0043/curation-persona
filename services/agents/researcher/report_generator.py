@@ -1,12 +1,72 @@
+import logging
+
+from shared.gemini_client import GeminiClient
 from shared.models import ScoredArticle
+
+logger = logging.getLogger(__name__)
+
+RESEARCH_PROMPT = """\
+あなたは技術記事の深掘りレポートを作成するリサーチャーです。
+以下の記事について、詳細な分析レポートをマークダウン形式で作成してください。
+
+## 対象記事
+- タイトル: {title}
+- URL: {url}
+- 内容: {content}
+
+{related_context}
+
+## レポート要件
+以下の構成でレポートを作成してください:
+
+### 要約
+記事の主要なポイントを3〜5文で簡潔にまとめてください。
+
+### 関連性分析
+この記事がなぜ重要か、どのような文脈で役立つかを分析してください。
+
+### キーポイント
+記事から得られる重要な知見を箇条書きで3〜5つ挙げてください。
+
+### アクションアイテム
+この記事の内容を踏まえて、読者が取れる具体的なアクションを提案してください。
+"""
 
 
 class ReportGenerator:
-    """レポート生成（Phase 1: シグネチャのみ）"""
+    """深掘りレポート生成"""
+
+    def __init__(self, gemini_client: GeminiClient):
+        self.gemini_client = gemini_client
 
     async def generate(
         self,
         article: ScoredArticle,
         related_articles: list[dict],
     ) -> str:
-        return "スタブレポート: Phase 2で実装されます。"
+        related_context = self._get_related_context(related_articles)
+
+        prompt = RESEARCH_PROMPT.format(
+            title=article.title,
+            url=article.url,
+            content=article.content or "",
+            related_context=related_context,
+        )
+
+        report = await self.gemini_client.generate_text(prompt)
+        logger.info(f"Report generated for: {article.title}")
+        return report
+
+    def _get_related_context(self, related_articles: list[dict]) -> str:
+        if not related_articles:
+            return ""
+
+        lines = ["## 関連する高評価記事（参考コンテキスト）"]
+        for article in related_articles[:5]:
+            lines.append(
+                f"- {article['title']} (評価: {article.get('user_rating', 'N/A')})"
+            )
+            if article.get("content"):
+                lines.append(f"  概要: {article['content'][:200]}")
+
+        return "\n".join(lines)
