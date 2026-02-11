@@ -767,8 +767,8 @@ def create_app() -> FastAPI:
         description="RSS/Webサイトから記事を収集し、スコアリングを依頼するエージェント",
         url="http://localhost:8001/",  # デプロイ時に環境変数で上書き
         version="0.1.0",
-        default_input_modes=["text/plain"],
-        default_output_modes=["text/plain"],
+        defaultInputModes=["text/plain"],
+        defaultOutputModes=["text/plain"],
         capabilities=AgentCapabilities(streaming=False),
         skills=[skill],
     )
@@ -819,12 +819,12 @@ class CollectorAgentExecutor(AgentExecutor):
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
         # リクエストメッセージからパラメータを取得
-        user_message = context.message
         params = {}
-        for part in user_message.parts:
-            if hasattr(part, 'root') and isinstance(part.root, DataPart):
-                params = part.root.data
-                break
+        if context.request and context.request.message:
+            for part in context.request.message.parts:
+                if hasattr(part, 'root') and isinstance(part.root, DataPart):
+                    params = part.root.data
+                    break
 
         user_id = params.get("user_id", "")
         logger.info(f"Starting article collection for user: {user_id}")
@@ -1005,8 +1005,8 @@ def create_app() -> FastAPI:
         description="ユーザー評価ベースのLLMスコアリングで記事に関連性スコアを付与するエージェント",
         url="http://localhost:8002/",
         version="0.1.0",
-        default_input_modes=["text/plain"],
-        default_output_modes=["text/plain"],
+        defaultInputModes=["text/plain"],
+        defaultOutputModes=["text/plain"],
         capabilities=AgentCapabilities(streaming=False),
         skills=[skill],
     )
@@ -1053,12 +1053,12 @@ class LibrarianAgentExecutor(AgentExecutor):
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
-        user_message = context.message
         params = {}
-        for part in user_message.parts:
-            if hasattr(part, 'root') and isinstance(part.root, DataPart):
-                params = part.root.data
-                break
+        if context.request and context.request.message:
+            for part in context.request.message.parts:
+                if hasattr(part, 'root') and isinstance(part.root, DataPart):
+                    params = part.root.data
+                    break
 
         user_id = params.get("user_id", "")
         collection_id = params.get("collection_id", "")
@@ -1340,8 +1340,8 @@ def create_app() -> FastAPI:
         description="ピックアップ記事の詳細調査レポートを生成するエージェント",
         url="http://localhost:8003/",
         version="0.1.0",
-        default_input_modes=["text/plain"],
-        default_output_modes=["text/plain"],
+        defaultInputModes=["text/plain"],
+        defaultOutputModes=["text/plain"],
         capabilities=AgentCapabilities(streaming=False),
         skills=[skill],
     )
@@ -1389,12 +1389,12 @@ class ResearcherAgentExecutor(AgentExecutor):
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
-        user_message = context.message
         params = {}
-        for part in user_message.parts:
-            if hasattr(part, 'root') and isinstance(part.root, DataPart):
-                params = part.root.data
-                break
+        if context.request and context.request.message:
+            for part in context.request.message.parts:
+                if hasattr(part, 'root') and isinstance(part.root, DataPart):
+                    params = part.root.data
+                    break
 
         research_params = ResearchArticleParams(**params)
         logger.info(f"Starting research for article: {research_params.article_url}")
@@ -1642,7 +1642,7 @@ class A2AClient:
 
             # A2A メッセージを構築
             message = Message(
-                message_id=str(uuid.uuid4()),
+                messageId=str(uuid.uuid4()),
                 role="user",
                 parts=[
                     Part(root=DataPart(data={"skill": skill, **params}))
@@ -1650,7 +1650,8 @@ class A2AClient:
             )
 
             request = SendMessageRequest(
-                params=MessageSendParams(message=message)
+                id=str(uuid.uuid4()),
+                params=MessageSendParams(message=message),
             )
 
             # メッセージ送信（同期応答を待機）
