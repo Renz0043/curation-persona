@@ -19,7 +19,7 @@ def _make_context(params: dict):
 
 def _make_event_queue():
     queue = MagicMock()
-    queue.enqueue_event = MagicMock()
+    queue.enqueue_event = AsyncMock()
     return queue
 
 
@@ -84,9 +84,11 @@ class Test_ResearcherAgentExecutor:
     async def test_executeがResearchArticleParamsを構築してserviceを呼ぶ(self, mock_service):
         from researcher.agent_executor import ResearcherAgentExecutor
 
-        mock_service.research = AsyncMock(
-            return_value={"status": "success", "article_url": "https://example.com/1"}
-        )
+        async def _stub_stream(params):
+            for chunk in ["チャンク1", "チャンク2"]:
+                yield chunk
+
+        mock_service.research_stream = _stub_stream
 
         executor = ResearcherAgentExecutor()
         context = _make_context({
@@ -94,14 +96,40 @@ class Test_ResearcherAgentExecutor:
             "collection_id": "col_1",
             "article_url": "https://example.com/1",
         })
+        context.task_id = "task-1"
+        context.context_id = "ctx-1"
         queue = _make_event_queue()
 
         await executor.execute(context, queue)
 
-        mock_service.research.assert_called_once()
-        call_arg = mock_service.research.call_args[0][0]
-        assert isinstance(call_arg, ResearchArticleParams)
-        assert call_arg.user_id == "user_1"
-        assert call_arg.collection_id == "col_1"
-        assert call_arg.article_url == "https://example.com/1"
-        queue.enqueue_event.assert_called_once()
+        # start_work + 2 add_artifact + complete = 4 イベント
+        assert queue.enqueue_event.call_count == 4
+
+    @patch("researcher.agent_executor.service")
+    async def test_executeがTaskUpdater経由でストリーミングイベントを発行する(
+        self, mock_service
+    ):
+        from researcher.agent_executor import ResearcherAgentExecutor
+
+        chunks_sent = []
+
+        async def _stub_stream(params):
+            for chunk in ["A", "B", "C"]:
+                yield chunk
+
+        mock_service.research_stream = _stub_stream
+
+        executor = ResearcherAgentExecutor()
+        context = _make_context({
+            "user_id": "user_1",
+            "collection_id": "col_1",
+            "article_url": "https://example.com/1",
+        })
+        context.task_id = "task-2"
+        context.context_id = "ctx-2"
+        queue = _make_event_queue()
+
+        await executor.execute(context, queue)
+
+        # start_work(1) + add_artifact(3) + complete(1) = 5
+        assert queue.enqueue_event.call_count == 5

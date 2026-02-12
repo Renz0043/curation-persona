@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings",
     "beautifulsoup4",
+    "mcp[cli]>=1.2.0",
 ]
 
 [project.optional-dependencies]

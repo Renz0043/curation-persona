@@ -1,4 +1,5 @@
 import logging
+from collections.abc import AsyncIterator
 
 from shared.gemini_client import GeminiClient
 from shared.models import ScoredArticle
@@ -39,23 +40,35 @@ class ReportGenerator:
     def __init__(self, gemini_client: GeminiClient):
         self.gemini_client = gemini_client
 
-    async def generate(
-        self,
-        article: ScoredArticle,
-        related_articles: list[dict],
+    def _build_prompt(
+        self, article: ScoredArticle, related_articles: list[dict]
     ) -> str:
         related_context = self._get_related_context(related_articles)
-
-        prompt = RESEARCH_PROMPT.format(
+        return RESEARCH_PROMPT.format(
             title=article.title,
             url=article.url,
             content=article.content or "",
             related_context=related_context,
         )
 
+    async def generate(
+        self,
+        article: ScoredArticle,
+        related_articles: list[dict],
+    ) -> str:
+        prompt = self._build_prompt(article, related_articles)
         report = await self.gemini_client.generate_text(prompt)
         logger.info(f"Report generated for: {article.title}")
         return report
+
+    async def generate_stream(
+        self,
+        article: ScoredArticle,
+        related_articles: list[dict],
+    ) -> AsyncIterator[str]:
+        prompt = self._build_prompt(article, related_articles)
+        async for chunk in self.gemini_client.generate_text_stream(prompt):
+            yield chunk
 
     def _get_related_context(self, related_articles: list[dict]) -> str:
         if not related_articles:

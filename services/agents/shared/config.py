@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     # Gemini
     gemini_api_key: str = ""
+    gemini_location: str = "us-central1"
     gemini_flash_model: str = "gemini-2.5-flash"
     gemini_pro_model: str = "gemini-2.5-pro"
 

@@ -108,6 +108,29 @@ class FirestoreClient:
                 break
         await doc_ref.update({"articles": data["articles"]})
 
+    async def get_latest_collection(
+        self, user_id: str, date: Optional[str] = None
+    ) -> Optional[ArticleCollection]:
+        """ユーザーの最新コレクションを取得する。
+
+        Args:
+            user_id: ユーザーID
+            date: YYYY-MM-DD 形式の日付。指定時はその日のコレクションを返す。
+        """
+        if self.db is None:
+            logger.info(f"[STUB] get_latest_collection({user_id}, date={date})")
+            return None
+        query = (
+            self.db.collection("collections")
+            .where("user_id", "==", user_id)
+        )
+        if date:
+            query = query.where("date", "==", date)
+        query = query.order_by("created_at", direction="DESCENDING").limit(1)
+        async for doc in query.stream():
+            return ArticleCollection.model_validate(doc.to_dict())
+        return None
+
     async def update_collection_status(
         self, collection_id: str, status: CollectionStatus
     ):

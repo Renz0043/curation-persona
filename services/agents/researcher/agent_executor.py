@@ -1,9 +1,10 @@
 import logging
+import uuid
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.types import DataPart
-from a2a.utils import new_agent_text_message
+from a2a.server.tasks import TaskUpdater
+from a2a.types import DataPart, Part, TextPart
 
 from shared.firestore_client import FirestoreClient
 from shared.gemini_client import GeminiClient
@@ -34,13 +35,23 @@ class ResearcherAgentExecutor(AgentExecutor):
         validated = ResearchArticleParams.model_validate(params)
         logger.info(f"Starting research for article: {validated.article_url}")
 
-        result = await service.research(validated)
+        updater = TaskUpdater(event_queue, context.task_id, context.context_id)
+        await updater.start_work()
 
-        event_queue.enqueue_event(
-            new_agent_text_message(
-                f"Research completed for: {validated.article_url}"
-            )
-        )
+        try:
+            artifact_id = str(uuid.uuid4())
+            is_first = True
+            async for chunk in service.research_stream(validated):
+                await updater.add_artifact(
+                    parts=[Part(root=TextPart(text=chunk))],
+                    artifact_id=artifact_id,
+                    append=None if is_first else True,
+                )
+                is_first = False
+            await updater.complete()
+        except Exception:
+            await updater.failed()
+            raise
 
     async def cancel(
         self, context: RequestContext, event_queue: EventQueue

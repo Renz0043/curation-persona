@@ -145,3 +145,94 @@ class Test_ResearcherService:
 
         # レポート保存は呼ばれない
         mock_firestore_client.update_article_research.assert_not_called()
+
+    async def test_ストリーミングでレポートが生成されFirestoreに全文保存される(
+        self, mock_firestore_client, mock_gemini_client
+    ):
+        article = _make_article("AI最新動向", "https://example.com/ai")
+        collection = _make_collection([article])
+        mock_firestore_client.get_collection.return_value = collection
+
+        service = self._make_service(mock_firestore_client, mock_gemini_client)
+        params = ResearchArticleParams(
+            user_id="user_1",
+            collection_id="col_1",
+            article_url="https://example.com/ai",
+        )
+
+        chunks = [c async for c in service.research_stream(params)]
+
+        assert chunks == ["チャンク1", "チャンク2", "チャンク3"]
+
+        # ステータスが RESEARCHING → COMPLETED と遷移
+        mock_firestore_client.update_article_research_status.assert_called_once_with(
+            "col_1", "https://example.com/ai", ResearchStatus.RESEARCHING
+        )
+        # 全文結合で Firestore に保存
+        mock_firestore_client.update_article_research.assert_called_once_with(
+            "col_1",
+            "https://example.com/ai",
+            deep_dive_report="チャンク1チャンク2チャンク3",
+            research_status=ResearchStatus.COMPLETED,
+        )
+
+    async def test_ストリーミングで記事未発見時にValueErrorが発生する(
+        self, mock_firestore_client, mock_gemini_client
+    ):
+        collection = _make_collection(
+            [_make_article("別の記事", "https://example.com/other")]
+        )
+        mock_firestore_client.get_collection.return_value = collection
+
+        service = self._make_service(mock_firestore_client, mock_gemini_client)
+        params = ResearchArticleParams(
+            user_id="user_1",
+            collection_id="col_1",
+            article_url="https://example.com/not-found",
+        )
+
+        with pytest.raises(ValueError, match="Article not found"):
+            async for _ in service.research_stream(params):
+                pass
+
+        mock_firestore_client.update_article_research_status.assert_not_called()
+
+    async def test_ストリーミングでレポート生成失敗時にFAILEDステータスに遷移する(
+        self, mock_firestore_client, mock_gemini_client
+    ):
+        article = _make_article("対象記事", "https://example.com/target")
+        collection = _make_collection([article])
+        mock_firestore_client.get_collection.return_value = collection
+
+        # ストリーミング中に例外を発生させる
+        async def _error_stream(prompt):
+            yield "部分テキスト"
+            raise RuntimeError("API error")
+
+        mock_gemini_client.generate_text_stream = _error_stream
+
+        service = self._make_service(mock_firestore_client, mock_gemini_client)
+        params = ResearchArticleParams(
+            user_id="user_1",
+            collection_id="col_1",
+            article_url="https://example.com/target",
+        )
+
+        with pytest.raises(RuntimeError, match="API error"):
+            async for _ in service.research_stream(params):
+                pass
+
+        # RESEARCHING → FAILED に遷移
+        calls = mock_firestore_client.update_article_research_status.call_args_list
+        assert len(calls) == 2
+        assert calls[0].args == (
+            "col_1",
+            "https://example.com/target",
+            ResearchStatus.RESEARCHING,
+        )
+        assert calls[1].args == (
+            "col_1",
+            "https://example.com/target",
+            ResearchStatus.FAILED,
+        )
+        mock_firestore_client.update_article_research.assert_not_called()

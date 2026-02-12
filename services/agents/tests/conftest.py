@@ -21,6 +21,7 @@ def mock_firestore_client():
     client.update_article_feedback = AsyncMock()
     client.update_article_research_status = AsyncMock()
     client.update_article_research = AsyncMock()
+    client.get_latest_collection = AsyncMock(return_value=None)
     return client
 
 
@@ -36,6 +37,12 @@ def mock_gemini_client():
     client.model_name = "gemini-2.5-flash"
     client.generate_text = AsyncMock(return_value="スタブレスポンス")
     client.generate_json = AsyncMock(return_value={"score": 0.5, "reason": "テスト"})
+
+    async def _stub_stream(prompt):
+        for chunk in ["チャンク1", "チャンク2", "チャンク3"]:
+            yield chunk
+
+    client.generate_text_stream = _stub_stream
     return client
 
 
