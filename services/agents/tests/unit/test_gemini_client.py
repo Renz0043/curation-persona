@@ -53,3 +53,53 @@ class Test_GeminiClient:
             contents="テストプロンプト",
             config={"response_mime_type": "application/json"},
         )
+
+    @patch("shared.gemini_client.genai.Client")
+    async def test_generate_text_streamがチャンクを順次返す(self, mock_genai_client):
+        chunk1 = MagicMock()
+        chunk1.text = "こんにちは"
+        chunk2 = MagicMock()
+        chunk2.text = "世界"
+        chunk3 = MagicMock()
+        chunk3.text = "！"
+
+        async def mock_stream():
+            for c in [chunk1, chunk2, chunk3]:
+                yield c
+
+        mock_aio = AsyncMock()
+        mock_aio.models.generate_content_stream.return_value = mock_stream()
+        mock_genai_client.return_value.aio = mock_aio
+
+        client = GeminiClient("flash")
+        chunks = [c async for c in client.generate_text_stream("テストプロンプト")]
+
+        assert chunks == ["こんにちは", "世界", "！"]
+        mock_aio.models.generate_content_stream.assert_called_once_with(
+            model="gemini-2.5-flash",
+            contents="テストプロンプト",
+        )
+
+    @patch("shared.gemini_client.genai.Client")
+    async def test_generate_text_streamでtextがNoneのチャンクはスキップされる(
+        self, mock_genai_client
+    ):
+        chunk1 = MagicMock()
+        chunk1.text = "有効"
+        chunk_none = MagicMock()
+        chunk_none.text = None
+        chunk2 = MagicMock()
+        chunk2.text = "テキスト"
+
+        async def mock_stream():
+            for c in [chunk1, chunk_none, chunk2]:
+                yield c
+
+        mock_aio = AsyncMock()
+        mock_aio.models.generate_content_stream.return_value = mock_stream()
+        mock_genai_client.return_value.aio = mock_aio
+
+        client = GeminiClient("flash")
+        chunks = [c async for c in client.generate_text_stream("テスト")]
+
+        assert chunks == ["有効", "テキスト"]
