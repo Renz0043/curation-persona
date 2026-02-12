@@ -23,7 +23,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         defaultInputModes=["text/plain"],
         defaultOutputModes=["text/plain"],
-        capabilities=AgentCapabilities(streaming=False),
+        capabilities=AgentCapabilities(streaming=True),
         skills=[skill],
     )
 

@@ -46,3 +46,11 @@ class Test_ReportGenerator:
         # プロンプトに関連記事セクションが含まれない
         prompt = mock_gemini_client.generate_text.call_args[0][0]
         assert "関連する高評価記事" not in prompt
+
+    async def test_ストリーミングでレポートがチャンク単位で生成される(self, mock_gemini_client):
+        generator = ReportGenerator(mock_gemini_client)
+        article = _make_article("AI技術記事", "https://example.com/ai")
+
+        chunks = [c async for c in generator.generate_stream(article, [])]
+
+        assert chunks == ["チャンク1", "チャンク2", "チャンク3"]
