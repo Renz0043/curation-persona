@@ -222,3 +222,57 @@ class Test_LibrarianService:
         assert call_args[0][0] == collection.articles
         assert call_args[1]["max_count"] == 10
         assert call_args[1]["delay"] == 2.0
+
+    async def test_スコアリング後にtitle_embeddingが生成される(
+        self, mock_firestore_client, mock_gemini_client, mock_scraper
+    ):
+        articles = [
+            _make_article("記事A", "https://example.com/a"),
+            _make_article("記事B", "https://example.com/b"),
+        ]
+        collection = _make_collection(articles)
+        mock_firestore_client.get_collection.return_value = collection
+        mock_firestore_client.get_user.return_value = {"user_id": "user_1"}
+        mock_firestore_client.get_high_rated_articles.return_value = []
+
+        mock_gemini_client.embed_content.return_value = [
+            [0.1, 0.2, 0.3],
+            [0.4, 0.5, 0.6],
+        ]
+
+        service = self._make_service(mock_firestore_client, mock_gemini_client, mock_scraper)
+        await service.score_collection("user_1", "col_1")
+
+        # embed_content が記事タイトルで呼ばれる
+        mock_gemini_client.embed_content.assert_called_once_with(["記事A", "記事B"])
+
+        # update_article_embeddings が (url, embedding) ペアで呼ばれる
+        mock_firestore_client.update_article_embeddings.assert_called_once()
+        call_args = mock_firestore_client.update_article_embeddings.call_args
+        assert call_args[0][0] == "col_1"
+        embeddings_list = call_args[0][1]
+        assert len(embeddings_list) == 2
+        assert embeddings_list[0] == ("https://example.com/a", [0.1, 0.2, 0.3])
+        assert embeddings_list[1] == ("https://example.com/b", [0.4, 0.5, 0.6])
+
+    async def test_embedding生成失敗でもスコアリングは完了する(
+        self, mock_firestore_client, mock_gemini_client, mock_scraper
+    ):
+        articles = [_make_article()]
+        collection = _make_collection(articles)
+        mock_firestore_client.get_collection.return_value = collection
+        mock_firestore_client.get_user.return_value = {"user_id": "user_1"}
+        mock_firestore_client.get_high_rated_articles.return_value = []
+
+        # embed_content が例外を投げる
+        mock_gemini_client.embed_content.side_effect = RuntimeError("API error")
+
+        service = self._make_service(mock_firestore_client, mock_gemini_client, mock_scraper)
+        result = await service.score_collection("user_1", "col_1")
+
+        # スコアリング自体は成功
+        assert result["status"] == "success"
+        # COMPLETED ステータスに遷移
+        mock_firestore_client.update_collection_status.assert_any_call(
+            "col_1", CollectionStatus.COMPLETED
+        )

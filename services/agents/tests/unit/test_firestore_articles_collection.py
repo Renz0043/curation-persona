@@ -215,3 +215,82 @@ class Test_update_collection_articles:
         article_data = first_call[0][1]
         assert article_data["user_id"] == "user_1"
         assert article_data["collection_id"] == "col_1"
+
+
+class Test_update_article_embeddings:
+    async def test_スタブモードでエラーなく動作する(self):
+        client = FirestoreClient.__new__(FirestoreClient)
+        client.db = None
+        await client.update_article_embeddings("col_1", [])
+
+    async def test_Embeddingがバッチ更新される(self):
+        client = FirestoreClient.__new__(FirestoreClient)
+
+        mock_batch = MagicMock()
+        mock_batch.commit = AsyncMock()
+        mock_art_doc_ref = MagicMock()
+        mock_articles = MagicMock()
+        mock_articles.document.return_value = mock_art_doc_ref
+
+        mock_db = MagicMock()
+        mock_db.collection.return_value = mock_articles
+        mock_db.batch.return_value = mock_batch
+        client.db = mock_db
+
+        article_embeddings = [
+            ("https://example.com/1", [0.1, 0.2, 0.3]),
+            ("https://example.com/2", [0.4, 0.5, 0.6]),
+        ]
+
+        await client.update_article_embeddings("col_1", article_embeddings)
+
+        assert mock_batch.update.call_count == 2
+        mock_batch.commit.assert_called_once()
+
+        # Vector オブジェクトが渡される
+        first_call = mock_batch.update.call_args_list[0]
+        update_data = first_call[0][1]
+        assert "title_embedding" in update_data
+
+
+class Test_find_similar_articles:
+    async def test_スタブモードで空リストを返す(self):
+        client = FirestoreClient.__new__(FirestoreClient)
+        client.db = None
+        result = await client.find_similar_articles("user_1", [0.1, 0.2])
+        assert result == []
+
+    async def test_ベクトル検索結果を辞書リストで返す(self):
+        client = FirestoreClient.__new__(FirestoreClient)
+
+        # articles query + find_nearest のモック
+        mock_art_doc = MagicMock()
+        mock_art_doc.to_dict.return_value = {
+            "title": "テスト記事",
+            "url": "https://example.com/1",
+            "source": "test",
+            "relevance_score": 0.85,
+            "collection_id": "col_1",
+            "vector_distance": 0.12,
+        }
+
+        mock_vector_query = MagicMock()
+
+        async def _stream():
+            yield mock_art_doc
+
+        mock_vector_query.stream = _stream
+
+        mock_query = MagicMock()
+        mock_query.where.return_value = mock_query
+        mock_query.find_nearest.return_value = mock_vector_query
+
+        mock_db = MagicMock()
+        mock_db.collection.return_value = mock_query
+        client.db = mock_db
+
+        result = await client.find_similar_articles("user_1", [0.1, 0.2], limit=5)
+
+        assert len(result) == 1
+        assert result[0]["title"] == "テスト記事"
+        assert result[0]["vector_distance"] == 0.12

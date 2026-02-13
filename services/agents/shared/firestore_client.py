@@ -250,6 +250,68 @@ class FirestoreClient:
             update_data["user_comment"] = comment
         await self.db.collection("articles").document(article_id).update(update_data)
 
+    async def update_article_embeddings(
+        self,
+        collection_id: str,
+        article_embeddings: list[tuple[str, list[float]]],
+    ):
+        """記事の title_embedding をバッチ更新する。
+
+        Args:
+            collection_id: コレクションID
+            article_embeddings: [(article_url, embedding), ...] のリスト
+        """
+        if self.db is None:
+            logger.info(f"[STUB] update_article_embeddings({collection_id})")
+            return
+
+        from google.cloud.firestore_v1.vector import Vector
+
+        for chunk in _chunked(article_embeddings, BATCH_LIMIT):
+            batch = self.db.batch()
+            for article_url, embedding in chunk:
+                article_id = generate_article_id(collection_id, article_url)
+                doc_ref = self.db.collection("articles").document(article_id)
+                batch.update(doc_ref, {"title_embedding": Vector(embedding)})
+            await batch.commit()
+
+    async def find_similar_articles(
+        self,
+        user_id: str,
+        query_embedding: list[float],
+        limit: int = 10,
+    ) -> list[dict]:
+        """ベクトル検索で類似記事を取得する。"""
+        if self.db is None:
+            logger.info(f"[STUB] find_similar_articles({user_id})")
+            return []
+
+        from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
+        from google.cloud.firestore_v1.vector import Vector
+
+        query = self.db.collection("articles").where("user_id", "==", user_id)
+        vector_query = query.find_nearest(
+            vector_field="title_embedding",
+            query_vector=Vector(query_embedding),
+            distance_measure=DistanceMeasure.COSINE,
+            limit=limit,
+            distance_result_field="vector_distance",
+        )
+        results = []
+        async for doc in vector_query.stream():
+            data = doc.to_dict()
+            results.append(
+                {
+                    "title": data.get("title"),
+                    "url": data.get("url"),
+                    "source": data.get("source"),
+                    "relevance_score": data.get("relevance_score", 0),
+                    "collection_id": data.get("collection_id"),
+                    "vector_distance": data.get("vector_distance"),
+                }
+            )
+        return results
+
     async def has_new_ratings_since(self, user_id: str, since: datetime) -> bool:
         if self.db is None:
             return False
