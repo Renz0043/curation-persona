@@ -11,6 +11,7 @@ from shared.models import (
     ScoringStatus,
     SourceConfig,
     SourceType,
+    generate_article_id,
 )
 
 
@@ -125,6 +126,49 @@ class Test_スキルパラメータ:
             article_url="https://example.com/article",
         )
         assert params.article_url == "https://example.com/article"
+
+
+class Test_generate_article_id:
+    def test_コレクションIDとURLからIDが生成される(self):
+        article_id = generate_article_id("col_1", "https://example.com/article")
+        assert article_id.startswith("col_1_")
+        assert len(article_id) == len("col_1_") + 8
+
+    def test_同じ入力で同じIDが生成される(self):
+        id1 = generate_article_id("col_1", "https://example.com/1")
+        id2 = generate_article_id("col_1", "https://example.com/1")
+        assert id1 == id2
+
+    def test_異なるURLで異なるIDが生成される(self):
+        id1 = generate_article_id("col_1", "https://example.com/1")
+        id2 = generate_article_id("col_1", "https://example.com/2")
+        assert id1 != id2
+
+    def test_異なるコレクションIDで異なるIDが生成される(self):
+        id1 = generate_article_id("col_1", "https://example.com/1")
+        id2 = generate_article_id("col_2", "https://example.com/1")
+        assert id1 != id2
+
+
+class Test_ScoredArticle_id:
+    def test_デフォルトでNone(self):
+        article = ScoredArticle(
+            title="Test",
+            url="https://example.com",
+            source="Test",
+            source_type=SourceType.RSS,
+        )
+        assert article.id is None
+
+    def test_IDを設定できる(self):
+        article = ScoredArticle(
+            id="col_1_abc12345",
+            title="Test",
+            url="https://example.com",
+            source="Test",
+            source_type=SourceType.RSS,
+        )
+        assert article.id == "col_1_abc12345"
 
 
 class Test_Enum値:

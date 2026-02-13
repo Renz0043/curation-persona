@@ -39,16 +39,34 @@ async def main():
     async for doc in db.collection("collections").stream():
         col_count += 1
         d = doc.to_dict()
-        articles = d.get("articles", [])
-        pickups = [a for a in articles if a.get("is_pickup")]
-        scored = [a for a in articles if a.get("scoring_status") == "scored"]
-
         print(f"\n  [{doc.id}]")
         print(f"    status: {d.get('status')}")
         print(f"    date: {d.get('date')}")
-        print(f"    articles: {len(articles)}件 (scored: {len(scored)}, pickup: {len(pickups)})")
+        print(f"    user_id: {d.get('user_id')}")
+    if col_count == 0:
+        print("  (empty)")
 
-        if articles:
+    # articles
+    print("\n--- articles ---")
+    art_count = 0
+    articles_by_collection: dict[str, list[dict]] = {}
+    async for doc in db.collection("articles").stream():
+        art_count += 1
+        d = doc.to_dict()
+        col_id = d.get("collection_id", "unknown")
+        articles_by_collection.setdefault(col_id, []).append(d)
+
+    if art_count == 0:
+        print("  (empty)")
+    else:
+        for col_id, articles in articles_by_collection.items():
+            pickups = [a for a in articles if a.get("is_pickup")]
+            scored = [a for a in articles if a.get("scoring_status") == "scored"]
+            print(f"\n  [collection: {col_id}]")
+            print(
+                f"    {len(articles)}件 (scored: {len(scored)}, pickup: {len(pickups)})"
+            )
+
             sorted_a = sorted(
                 articles, key=lambda a: a.get("relevance_score", 0), reverse=True
             )
@@ -64,11 +82,12 @@ async def main():
                     print(f"        reason: {a['relevance_reason'][:60]}")
                 if a.get("deep_dive_report"):
                     print(f"        report: {a['deep_dive_report'][:60]}...")
+                if a.get("user_rating"):
+                    print(f"        rating: {'★' * a['user_rating']}")
             if len(articles) > 5:
                 print(f"    ... 他 {len(articles) - 5}件")
-    if col_count == 0:
-        print("  (empty)")
 
+    print(f"\n  合計: users={user_count}, collections={col_count}, articles={art_count}")
     print("\n" + "=" * 70)
 
 

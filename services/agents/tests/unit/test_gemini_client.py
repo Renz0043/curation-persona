@@ -103,3 +103,27 @@ class Test_GeminiClient:
         chunks = [c async for c in client.generate_text_stream("テスト")]
 
         assert chunks == ["有効", "テキスト"]
+
+    @patch("shared.gemini_client.genai.Client")
+    async def test_embed_contentがEmbeddingリストを返す(self, mock_genai_client):
+        mock_emb1 = MagicMock()
+        mock_emb1.values = [0.1, 0.2, 0.3]
+        mock_emb2 = MagicMock()
+        mock_emb2.values = [0.4, 0.5, 0.6]
+
+        mock_response = MagicMock()
+        mock_response.embeddings = [mock_emb1, mock_emb2]
+
+        mock_aio = AsyncMock()
+        mock_aio.models.embed_content.return_value = mock_response
+        mock_genai_client.return_value.aio = mock_aio
+
+        client = GeminiClient("flash")
+        result = await client.embed_content(["テスト1", "テスト2"])
+
+        assert result == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+        mock_aio.models.embed_content.assert_called_once_with(
+            model="text-embedding-004",
+            contents=["テスト1", "テスト2"],
+            config={"output_dimensionality": 768},
+        )

@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 from shared.firestore_client import FirestoreClient
+from shared.models import generate_article_id
 
 
 class Test_update_article_feedback:
@@ -12,56 +13,35 @@ class Test_update_article_feedback:
     async def test_記事のフィードバックが更新される(self):
         client = FirestoreClient.__new__(FirestoreClient)
 
-        mock_doc = MagicMock()
-        mock_doc.to_dict.return_value = {
-            "articles": [
-                {"url": "https://example.com/1", "title": "記事1"},
-                {"url": "https://example.com/2", "title": "記事2"},
-            ]
-        }
         mock_doc_ref = AsyncMock()
-        mock_doc_ref.get.return_value = mock_doc
-
-        mock_collection = MagicMock()
-        mock_collection.document.return_value = mock_doc_ref
+        mock_articles_col = MagicMock()
+        mock_articles_col.document.return_value = mock_doc_ref
 
         mock_db = MagicMock()
-        mock_db.collection.return_value = mock_collection
+        mock_db.collection.return_value = mock_articles_col
         client.db = mock_db
 
         await client.update_article_feedback(
             "col_1", "https://example.com/1", 4, "良い記事"
         )
 
-        # update が呼ばれたことを確認
-        mock_doc_ref.update.assert_called_once()
-        updated_articles = mock_doc_ref.update.call_args[0][0]["articles"]
-        assert updated_articles[0]["user_rating"] == 4
-        assert updated_articles[0]["user_comment"] == "良い記事"
-        # 他の記事は変更なし
-        assert "user_rating" not in updated_articles[1]
+        article_id = generate_article_id("col_1", "https://example.com/1")
+        mock_articles_col.document.assert_called_with(article_id)
+        mock_doc_ref.update.assert_called_once_with(
+            {"user_rating": 4, "user_comment": "良い記事"}
+        )
 
     async def test_コメントなしで評価のみ更新される(self):
         client = FirestoreClient.__new__(FirestoreClient)
 
-        mock_doc = MagicMock()
-        mock_doc.to_dict.return_value = {
-            "articles": [
-                {"url": "https://example.com/1", "title": "記事1"},
-            ]
-        }
         mock_doc_ref = AsyncMock()
-        mock_doc_ref.get.return_value = mock_doc
-
-        mock_collection = MagicMock()
-        mock_collection.document.return_value = mock_doc_ref
+        mock_articles_col = MagicMock()
+        mock_articles_col.document.return_value = mock_doc_ref
 
         mock_db = MagicMock()
-        mock_db.collection.return_value = mock_collection
+        mock_db.collection.return_value = mock_articles_col
         client.db = mock_db
 
         await client.update_article_feedback("col_1", "https://example.com/1", 3)
 
-        updated_articles = mock_doc_ref.update.call_args[0][0]["articles"]
-        assert updated_articles[0]["user_rating"] == 3
-        assert "user_comment" not in updated_articles[0]
+        mock_doc_ref.update.assert_called_once_with({"user_rating": 3})

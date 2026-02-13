@@ -11,6 +11,7 @@ import sys
 from mcp.server.fastmcp import FastMCP
 
 from shared.firestore_client import FirestoreClient
+from shared.gemini_client import GeminiClient
 from shared.models import ArticleCollection, ScoredArticle
 
 # stdio トランスポートでは stdout を JSON-RPC が占有するため stderr にログ出力
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("curation-persona")
 firestore = FirestoreClient()
+gemini = GeminiClient()
 
 
 def _get_user_id() -> str:
@@ -190,6 +192,39 @@ async def get_high_rated_articles(min_rating: int = 4) -> str:
             lines.append(f"   コメント: {article['user_comment']}")
         if article.get("content"):
             lines.append(f"   概要: {article['content']}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def search_similar_articles(query: str, limit: int = 10) -> str:
+    """クエリテキストに類似した過去の記事をベクトル検索で取得します。
+
+    Args:
+        query: 検索クエリ（自然言語テキスト）
+        limit: 最大取得件数（デフォルト: 10）
+    """
+    user_id = _get_user_id()
+    embeddings = await gemini.embed_content([query])
+    query_embedding = embeddings[0]
+
+    articles = await firestore.find_similar_articles(
+        user_id, query_embedding, limit=limit
+    )
+    if not articles:
+        return "類似記事が見つかりませんでした。"
+
+    lines = [f"## 類似記事検索結果（{len(articles)}件）", f"クエリ: {query}", ""]
+    for i, article in enumerate(articles, 1):
+        lines.append(f"{i}. **{article['title']}**")
+        lines.append(f"   URL: {article['url']}")
+        if article.get("source"):
+            lines.append(f"   ソース: {article['source']}")
+        if article.get("relevance_score"):
+            lines.append(f"   関連スコア: {article['relevance_score']:.2f}")
+        if article.get("vector_distance") is not None:
+            lines.append(f"   ベクトル距離: {article['vector_distance']:.4f}")
         lines.append("")
 
     return "\n".join(lines)

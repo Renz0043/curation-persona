@@ -17,9 +17,14 @@ def _make_context(params: dict):
     return context
 
 
-def _make_event_queue():
+def _make_event_queue(async_enqueue=False):
+    """EventQueue モックを生成。
+
+    Collector/Librarian は enqueue_event を同期呼び出し、
+    Researcher は TaskUpdater 経由で await するため使い分ける。
+    """
     queue = MagicMock()
-    queue.enqueue_event = AsyncMock()
+    queue.enqueue_event = AsyncMock() if async_enqueue else MagicMock()
     return queue
 
 
@@ -98,7 +103,7 @@ class Test_ResearcherAgentExecutor:
         })
         context.task_id = "task-1"
         context.context_id = "ctx-1"
-        queue = _make_event_queue()
+        queue = _make_event_queue(async_enqueue=True)
 
         await executor.execute(context, queue)
 
@@ -110,8 +115,6 @@ class Test_ResearcherAgentExecutor:
         self, mock_service
     ):
         from researcher.agent_executor import ResearcherAgentExecutor
-
-        chunks_sent = []
 
         async def _stub_stream(params):
             for chunk in ["A", "B", "C"]:
@@ -127,7 +130,7 @@ class Test_ResearcherAgentExecutor:
         })
         context.task_id = "task-2"
         context.context_id = "ctx-2"
-        queue = _make_event_queue()
+        queue = _make_event_queue(async_enqueue=True)
 
         await executor.execute(context, queue)
 

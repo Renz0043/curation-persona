@@ -48,6 +48,16 @@ class GeminiClient:
                 yield chunk.text
 
     @with_retry
+    async def embed_content(self, texts: list[str]) -> list[list[float]]:
+        """テキストリストの Embedding を生成する。"""
+        response = await self._client.aio.models.embed_content(
+            model=settings.gemini_embedding_model,
+            contents=texts,
+            config={"output_dimensionality": settings.embedding_dimensions},
+        )
+        return [e.values for e in response.embeddings]
+
+    @with_retry
     async def generate_json(self, prompt: str) -> dict:
         response = await self._client.aio.models.generate_content(
             model=self.model_name,

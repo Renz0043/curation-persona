@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     gemini_flash_model: str = "gemini-2.5-flash"
     gemini_pro_model: str = "gemini-2.5-pro"
 
+    # Embedding
+    gemini_embedding_model: str = "text-embedding-004"
+    embedding_dimensions: int = 768
+
     # ピックアップ設定
     pickup_count: int = 2
 

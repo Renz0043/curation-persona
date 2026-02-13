@@ -90,6 +90,10 @@ class LibrarianService:
             )
 
             await self.firestore.update_collection_articles(collection_id, articles)
+
+            # title_embedding を一括生成
+            await self._generate_title_embeddings(collection_id, articles)
+
             await self.firestore.update_collection_status(
                 collection_id, CollectionStatus.COMPLETED
             )
@@ -110,6 +114,26 @@ class LibrarianService:
                 collection_id, CollectionStatus.FAILED
             )
             raise
+
+    async def _generate_title_embeddings(
+        self, collection_id: str, articles: list
+    ):
+        """全記事の title_embedding を一括生成して Firestore に保存する。"""
+        if not articles:
+            return
+        try:
+            texts = [article.title for article in articles]
+            embeddings = await self.gemini_client.embed_content(texts)
+            article_embeddings = [
+                (article.url, embedding)
+                for article, embedding in zip(articles, embeddings)
+            ]
+            await self.firestore.update_article_embeddings(
+                collection_id, article_embeddings
+            )
+            logger.info(f"title_embedding 生成完了: {len(articles)}件")
+        except Exception as e:
+            logger.warning(f"title_embedding 生成に失敗（スコアリングは完了）: {e}")
 
     async def _ensure_interest_profile(self, user_id: str) -> Optional[str]:
         user = await self.firestore.get_user(user_id)

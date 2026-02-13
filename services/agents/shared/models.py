@@ -1,8 +1,15 @@
+import hashlib
 from datetime import datetime
 from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+
+def generate_article_id(collection_id: str, url: str) -> str:
+    """記事IDを生成する。{collection_id}_{url_hash_8桁}"""
+    url_hash = hashlib.sha256(url.encode()).hexdigest()[:8]
+    return f"{collection_id}_{url_hash}"
 
 
 class CollectionStatus(str, Enum):
@@ -52,6 +59,7 @@ class Article(BaseModel):
 
 
 class ScoredArticle(Article):
+    id: Optional[str] = None
     scoring_status: ScoringStatus = ScoringStatus.PENDING
     relevance_score: float = 0.0
     relevance_reason: str = ""
