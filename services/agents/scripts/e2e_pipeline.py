@@ -135,6 +135,17 @@ async def trigger_collector() -> str | None:
         return None
 
 
+async def _get_articles_for_collection(
+    db: firestore.AsyncClient, collection_id: str
+) -> list[dict]:
+    """articles コレクションからコレクションに属する記事を取得"""
+    articles = []
+    query = db.collection("articles").where("collection_id", "==", collection_id)
+    async for doc in query.stream():
+        articles.append(doc.to_dict())
+    return articles
+
+
 async def show_collection(db: firestore.AsyncClient) -> dict | None:
     """Firestoreからコレクションを取得して表示"""
     header("Step 3: Firestore データ確認")
@@ -155,7 +166,10 @@ async def show_collection(db: firestore.AsyncClient) -> dict | None:
         return None
 
     col = docs[0]
-    articles = col.get("articles", [])
+    # articles コレクションから記事を取得
+    articles = await _get_articles_for_collection(db, col["id"])
+    col["articles"] = articles
+
     pickups = [a for a in articles if a.get("is_pickup")]
     scored = [a for a in articles if a.get("scoring_status") == "scored"]
 
@@ -225,12 +239,11 @@ async def trigger_researcher(db: firestore.AsyncClient, collection: dict):
             sub(f"エラー ({elapsed:.1f}秒): {e}")
         print()
 
-    # 更新後のデータを確認
-    doc = await db.collection("collections").document(collection["id"]).get()
-    updated = doc.to_dict()
+    # 更新後の記事データを確認
+    updated_articles = await _get_articles_for_collection(db, collection["id"])
 
     print(f"  --- 深掘りレポート確認 ---")
-    for a in updated.get("articles", []):
+    for a in updated_articles:
         if a.get("deep_dive_report"):
             sub(f"[{a['title'][:40]}]")
             sub(f"ステータス: {a.get('research_status')}")
@@ -251,11 +264,22 @@ async def cleanup(db: firestore.AsyncClient):
 
     # コレクション削除
     query = db.collection("collections").where("user_id", "==", TEST_USER_ID)
-    count = 0
+    col_count = 0
+    collection_ids = []
     async for doc in query.stream():
+        collection_ids.append(doc.id)
         await doc.reference.delete()
-        count += 1
-    sub(f"コレクション {count}件 を削除")
+        col_count += 1
+    sub(f"コレクション {col_count}件 を削除")
+
+    # 記事削除
+    art_count = 0
+    for col_id in collection_ids:
+        art_query = db.collection("articles").where("collection_id", "==", col_id)
+        async for doc in art_query.stream():
+            await doc.reference.delete()
+            art_count += 1
+    sub(f"記事 {art_count}件 を削除")
 
 
 async def main():
