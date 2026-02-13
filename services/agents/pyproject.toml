@@ -35,6 +35,10 @@ include = ["shared*", "collector*", "librarian*", "researcher*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    # a2a-sdk 内部の非推奨定数 (HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+    "ignore::DeprecationWarning:a2a",
+]
 
 [tool.ruff]
 target-version = "py311"
