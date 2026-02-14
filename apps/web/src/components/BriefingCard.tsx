@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Sparkles, ExternalLink, Search } from "lucide-react";
 import ScoreBar from "./ScoreBar";
 import StarRating from "./StarRating";
@@ -142,8 +143,9 @@ export default function BriefingCard({ article, onRate }: BriefingCardProps) {
           <ExternalLink size={14} />
           原文を読む
         </a>
-        <button
-          className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors cursor-pointer"
+        <Link
+          href={`/article/${article.id}`}
+          className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors no-underline"
           style={{
             backgroundColor: "var(--color-primary-bg)",
             color: "var(--color-primary)",
@@ -161,7 +163,7 @@ export default function BriefingCard({ article, onRate }: BriefingCardProps) {
         >
           <Search size={14} />
           深掘りリサーチ
-        </button>
+        </Link>
       </div>
     </article>
   );

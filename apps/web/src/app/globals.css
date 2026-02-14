@@ -22,6 +22,10 @@
   /* Rating */
   --color-star: #FCD34D;
 
+  /* Sentiment */
+  --color-positive: #6b9c7b;
+  --color-risk: #d68c8c;
+
   /* Radius */
   --radius-sm: 4px;
   --radius-md: 6px;
