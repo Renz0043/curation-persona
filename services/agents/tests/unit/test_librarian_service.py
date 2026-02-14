@@ -243,7 +243,7 @@ class Test_LibrarianService:
         service = self._make_service(mock_firestore_client, mock_gemini_client, mock_scraper)
         await service.score_collection("user_1", "col_1")
 
-        # embed_content が記事タイトルで呼ばれる
+        # embed_content が記事タイトルで呼ばれる（meta_descriptionなしの場合はtitleのみ）
         mock_gemini_client.embed_content.assert_called_once_with(["記事A", "記事B"])
 
         # update_article_embeddings が (url, embedding) ペアで呼ばれる
@@ -254,6 +254,42 @@ class Test_LibrarianService:
         assert len(embeddings_list) == 2
         assert embeddings_list[0] == ("https://example.com/a", [0.1, 0.2, 0.3])
         assert embeddings_list[1] == ("https://example.com/b", [0.4, 0.5, 0.6])
+
+    async def test_meta_descriptionありの場合embeddingにtitleと結合して使われる(
+        self, mock_firestore_client, mock_gemini_client, mock_scraper
+    ):
+        articles = [
+            ScoredArticle(
+                title="記事A",
+                url="https://example.com/a",
+                source="test",
+                source_type=SourceType.RSS,
+                meta_description="記事Aの説明",
+            ),
+            ScoredArticle(
+                title="記事B",
+                url="https://example.com/b",
+                source="test",
+                source_type=SourceType.RSS,
+            ),
+        ]
+        collection = _make_collection(articles)
+        mock_firestore_client.get_collection.return_value = collection
+        mock_firestore_client.get_user.return_value = {"user_id": "user_1"}
+        mock_firestore_client.get_high_rated_articles.return_value = []
+
+        mock_gemini_client.embed_content.return_value = [
+            [0.1, 0.2, 0.3],
+            [0.4, 0.5, 0.6],
+        ]
+
+        service = self._make_service(mock_firestore_client, mock_gemini_client, mock_scraper)
+        await service.score_collection("user_1", "col_1")
+
+        # meta_descriptionありの記事は "title\nmeta_description" で呼ばれる
+        mock_gemini_client.embed_content.assert_called_once_with(
+            ["記事A\n記事Aの説明", "記事B"]
+        )
 
     async def test_embedding生成失敗でもスコアリングは完了する(
         self, mock_firestore_client, mock_gemini_client, mock_scraper

@@ -7,7 +7,7 @@ from urllib.robotparser import RobotFileParser
 import httpx
 from bs4 import BeautifulSoup
 
-from shared.models import ScoredArticle
+from shared.models import Article, ScoredArticle
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,54 @@ BOT_USER_AGENTS = [
 
 class WebScraper:
     """記事本文スクレイピング（robots.txt準拠・逐次取得）"""
+
+    async def fetch_meta_description(self, url: str) -> str | None:
+        """URLから<meta name="description">または<meta property="og:description">を取得する。"""
+        try:
+            async with httpx.AsyncClient(
+                headers={"User-Agent": USER_AGENT},
+                follow_redirects=True,
+                timeout=10.0,
+            ) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return self._extract_meta_description(response.text)
+        except Exception:
+            logger.warning(f"meta description取得失敗: {url}", exc_info=True)
+            return None
+
+    async def fetch_meta_descriptions(
+        self, articles: list[Article], concurrency: int = 10
+    ) -> None:
+        """記事リストのmeta_descriptionを並列取得してin-place更新する。"""
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _fetch(article: Article) -> None:
+            async with semaphore:
+                desc = await self.fetch_meta_description(article.url)
+                if desc:
+                    article.meta_description = desc
+
+        await asyncio.gather(*[_fetch(a) for a in articles])
+
+    def _extract_meta_description(self, html: str) -> str | None:
+        """HTMLからog:descriptionまたはmeta descriptionを抽出する。"""
+        soup = BeautifulSoup(html, "html.parser")
+        head = soup.find("head")
+        if not head:
+            return None
+
+        # og:description を優先
+        og = head.find("meta", attrs={"property": "og:description"})
+        if og and og.get("content"):
+            return og["content"].strip()
+
+        # meta name="description" にフォールバック
+        meta = head.find("meta", attrs={"name": "description"})
+        if meta and meta.get("content"):
+            return meta["content"].strip()
+
+        return None
 
     async def scrape_articles(
         self, articles: list[ScoredArticle], max_count: int = 10, delay: float = 2.0

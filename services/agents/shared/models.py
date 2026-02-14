@@ -55,6 +55,7 @@ class Article(BaseModel):
     source_type: SourceType
     summary: Optional[str] = None
     content: Optional[str] = None
+    meta_description: Optional[str] = None
     published_at: Optional[datetime] = None
 
 

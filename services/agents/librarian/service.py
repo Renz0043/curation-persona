@@ -122,7 +122,12 @@ class LibrarianService:
         if not articles:
             return
         try:
-            texts = [article.title for article in articles]
+            texts = [
+                f"{article.title}\n{article.meta_description}"
+                if article.meta_description
+                else article.title
+                for article in articles
+            ]
             embeddings = await self.gemini_client.embed_content(texts)
             article_embeddings = [
                 (article.url, embedding)

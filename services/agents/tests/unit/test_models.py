@@ -36,10 +36,21 @@ class Test_Article:
             source="RSS Feed",
             source_type=SourceType.RSS,
             content="Article content",
+            meta_description="記事の説明文",
             published_at=now,
         )
         assert article.content == "Article content"
+        assert article.meta_description == "記事の説明文"
         assert article.published_at == now
+
+    def test_meta_descriptionのデフォルトはNone(self):
+        article = Article(
+            title="Test",
+            url="https://example.com",
+            source="Test",
+            source_type=SourceType.RSS,
+        )
+        assert article.meta_description is None
 
 
 class Test_ScoredArticle:

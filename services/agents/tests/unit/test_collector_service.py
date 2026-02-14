@@ -27,11 +27,11 @@ def _make_article(title="テスト記事", url="https://example.com/1"):
 
 
 class Test_CollectorService:
-    def _make_service(self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry):
-        return CollectorService(mock_firestore_client, mock_a2a_client, mock_fetcher_registry)
+    def _make_service(self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper):
+        return CollectorService(mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper)
 
     async def test_RSS記事を収集してコレクションを作成する(
-        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
     ):
         # ユーザーに有効なRSSソースが1つある
         mock_firestore_client.get_user.return_value = {
@@ -49,7 +49,7 @@ class Test_CollectorService:
         mock_fetcher_registry.get_fetcher.return_value = mock_fetcher
 
         service = self._make_service(
-            mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+            mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
         )
         result = await service.execute("user_1")
 
@@ -69,7 +69,7 @@ class Test_CollectorService:
         assert call_kwargs[1]["skill"] == "score_articles"
 
     async def test_ソース取得失敗時にスキップして継続する(
-        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
     ):
         mock_firestore_client.get_user.return_value = {
             "user_id": "user_1",
@@ -99,7 +99,7 @@ class Test_CollectorService:
         mock_fetcher_registry.get_fetcher.side_effect = side_effect_get_fetcher
 
         service = self._make_service(
-            mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+            mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
         )
         result = await service.execute("user_1")
 
@@ -108,7 +108,7 @@ class Test_CollectorService:
         assert result["articles_total"] == 1
 
     async def test_重複URLが除去される(
-        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
     ):
         mock_firestore_client.get_user.return_value = {
             "user_id": "user_1",
@@ -132,7 +132,7 @@ class Test_CollectorService:
         mock_fetcher_registry.get_fetcher.return_value = mock_fetcher
 
         service = self._make_service(
-            mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+            mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
         )
         result = await service.execute("user_1")
 
@@ -143,7 +143,7 @@ class Test_CollectorService:
         assert len(set(urls)) == 3
 
     async def test_有効なソースのみ取得される(
-        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
     ):
         mock_firestore_client.get_user.return_value = {
             "user_id": "user_1",
@@ -159,7 +159,7 @@ class Test_CollectorService:
         mock_fetcher_registry.get_fetcher.return_value = mock_fetcher
 
         service = self._make_service(
-            mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+            mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
         )
         result = await service.execute("user_1")
 
@@ -168,7 +168,7 @@ class Test_CollectorService:
         assert mock_fetcher_registry.get_fetcher.call_count == 1
 
     async def test_ソースが空の場合は即座に成功を返す(
-        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
     ):
         mock_firestore_client.get_user.return_value = {
             "user_id": "user_1",
@@ -176,7 +176,7 @@ class Test_CollectorService:
         }
 
         service = self._make_service(
-            mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+            mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
         )
         result = await service.execute("user_1")
 
@@ -187,7 +187,7 @@ class Test_CollectorService:
         mock_a2a_client.send_message.assert_not_called()
 
     async def test_対応するfetcherが未登録のソースはスキップされる(
-        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+        self, mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
     ):
         mock_firestore_client.get_user.return_value = {
             "user_id": "user_1",
@@ -196,7 +196,7 @@ class Test_CollectorService:
         mock_fetcher_registry.get_fetcher.return_value = None
 
         service = self._make_service(
-            mock_firestore_client, mock_a2a_client, mock_fetcher_registry
+            mock_firestore_client, mock_a2a_client, mock_fetcher_registry, mock_scraper
         )
         result = await service.execute("user_1")
 

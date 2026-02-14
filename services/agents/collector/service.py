@@ -14,6 +14,7 @@ from shared.models import (
     ScoringStatus,
     SourceConfig,
 )
+from shared.scraper import WebScraper
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +27,12 @@ class CollectorService:
         firestore: FirestoreClient,
         a2a_client: A2AClient,
         fetcher_registry: FetcherRegistry,
+        scraper: WebScraper,
     ):
         self.firestore = firestore
         self.a2a_client = a2a_client
         self.fetcher_registry = fetcher_registry
+        self.scraper = scraper
 
     async def execute(self, user_id: str) -> dict:
         logger.info(f"execute: user_id={user_id}")
@@ -56,16 +59,13 @@ class CollectorService:
         # URL重複除去
         unique_articles = self._deduplicate(all_articles)
 
+        # meta description 並列取得
+        await self.scraper.fetch_meta_descriptions(unique_articles)
+
         # ScoredArticle に変換
         scored_articles = [
             ScoredArticle(
-                title=article.title,
-                url=article.url,
-                source=article.source,
-                source_type=article.source_type,
-                summary=article.summary,
-                content=article.content,
-                published_at=article.published_at,
+                **article.model_dump(),
                 scoring_status=ScoringStatus.PENDING,
             )
             for article in unique_articles

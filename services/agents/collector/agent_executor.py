@@ -8,6 +8,7 @@ from a2a.utils import new_agent_text_message
 from shared.a2a_client import A2AClient
 from shared.fetchers import fetcher_registry
 from shared.firestore_client import FirestoreClient
+from shared.scraper import WebScraper
 
 from .service import CollectorService
 
@@ -15,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 firestore = FirestoreClient()
 a2a_client = A2AClient()
-service = CollectorService(firestore, a2a_client, fetcher_registry)
+scraper = WebScraper()
+service = CollectorService(firestore, a2a_client, fetcher_registry, scraper)
 
 
 class CollectorAgentExecutor(AgentExecutor):

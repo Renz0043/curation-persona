@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from shared.models import ScoredArticle, SourceType
+from shared.models import Article, ScoredArticle, SourceType
 from shared.scraper import WebScraper
 
 
@@ -28,6 +28,34 @@ SIMPLE_HTML = """
 </article>
 <footer>フッター</footer>
 </body>
+</html>
+"""
+
+HTML_WITH_OG_DESCRIPTION = """
+<html>
+<head>
+<title>Test</title>
+<meta property="og:description" content="OG説明文です">
+<meta name="description" content="通常の説明文です">
+</head>
+<body><p>本文</p></body>
+</html>
+"""
+
+HTML_WITH_META_DESCRIPTION_ONLY = """
+<html>
+<head>
+<title>Test</title>
+<meta name="description" content="通常の説明文です">
+</head>
+<body><p>本文</p></body>
+</html>
+"""
+
+HTML_WITHOUT_DESCRIPTION = """
+<html>
+<head><title>Test</title></head>
+<body><p>本文</p></body>
 </html>
 """
 
@@ -118,3 +146,48 @@ class Test_WebScraper:
         # nav, footer は除去される
         assert "ナビゲーション" not in result
         assert "フッター" not in result
+
+
+class Test_MetaDescription:
+    def test_og_descriptionが優先して抽出される(self):
+        scraper = WebScraper()
+        result = scraper._extract_meta_description(HTML_WITH_OG_DESCRIPTION)
+        assert result == "OG説明文です"
+
+    def test_og_descriptionがない場合meta_descriptionにフォールバックする(self):
+        scraper = WebScraper()
+        result = scraper._extract_meta_description(HTML_WITH_META_DESCRIPTION_ONLY)
+        assert result == "通常の説明文です"
+
+    def test_descriptionがない場合Noneを返す(self):
+        scraper = WebScraper()
+        result = scraper._extract_meta_description(HTML_WITHOUT_DESCRIPTION)
+        assert result is None
+
+    async def test_fetch_meta_descriptionsで記事が一括更新される(self):
+        scraper = WebScraper()
+        articles = [
+            Article(title="記事1", url="https://example.com/1", source="test", source_type=SourceType.RSS),
+            Article(title="記事2", url="https://example.com/2", source="test", source_type=SourceType.RSS),
+        ]
+
+        with patch.object(scraper, "fetch_meta_description", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.side_effect = ["説明文1", None]
+            await scraper.fetch_meta_descriptions(articles)
+
+        assert articles[0].meta_description == "説明文1"
+        assert articles[1].meta_description is None
+
+    async def test_fetch_meta_description失敗時はNoneを返す(self):
+        scraper = WebScraper()
+
+        with patch("shared.scraper.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(side_effect=httpx.ConnectError("接続エラー"))
+            mock_client_cls.return_value = mock_client
+
+            result = await scraper.fetch_meta_description("https://example.com/fail")
+
+        assert result is None

@@ -71,6 +71,8 @@ def mock_scraper():
     scraper = WebScraper.__new__(WebScraper)
     scraper.scrape_articles = AsyncMock()
     scraper.scrape = AsyncMock(return_value=None)
+    scraper.fetch_meta_description = AsyncMock(return_value=None)
+    scraper.fetch_meta_descriptions = AsyncMock()
     return scraper
 
 

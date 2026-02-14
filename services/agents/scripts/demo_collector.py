@@ -15,6 +15,7 @@ from shared.a2a_client import A2AClient
 from shared.fetchers.registry import FetcherRegistry
 from shared.fetchers.rss_fetcher import RSSFetcher
 from shared.firestore_client import FirestoreClient
+from shared.scraper import WebScraper
 
 from collector.service import CollectorService
 
@@ -65,8 +66,11 @@ async def main():
     registry = FetcherRegistry()
     registry.register(RSSFetcher(max_age_days=3))
 
+    # WebScraper（meta description 並列取得用）
+    scraper = WebScraper()
+
     # CollectorService を組み立て
-    service = CollectorService(firestore, a2a_client, registry)
+    service = CollectorService(firestore, a2a_client, registry, scraper)
 
     print("=" * 60)
     print("Collector Agent デモ")
@@ -88,6 +92,8 @@ async def main():
             print(f"    URL: {article.url}")
             print(f"    ソース: {article.source} ({article.source_type.value})")
             print(f"    スコアリング: {article.scoring_status.value}")
+            if article.meta_description:
+                print(f"    meta: {article.meta_description[:100]}")
             if article.content:
                 print(f"    内容: {article.content[:100]}...")
 
