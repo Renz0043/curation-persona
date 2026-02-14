@@ -198,6 +198,7 @@ class FirestoreClient:
         article_url: str,
         deep_dive_report: str,
         research_status: Optional[ResearchStatus] = None,
+        cross_industry_feedback: Optional[dict] = None,
     ):
         if self.db is None:
             logger.info(f"[STUB] update_article_research({collection_id})")
@@ -206,6 +207,8 @@ class FirestoreClient:
         update_data = {"deep_dive_report": deep_dive_report}
         if research_status:
             update_data["research_status"] = research_status.value
+        if cross_industry_feedback:
+            update_data["cross_industry_feedback"] = cross_industry_feedback
         await self.db.collection("articles").document(article_id).update(update_data)
 
     async def get_latest_collection(

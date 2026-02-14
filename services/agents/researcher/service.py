@@ -121,12 +121,22 @@ class ResearcherService:
             # レポート生成
             report = await self.report_generator.generate(article, related_articles)
 
+            # 異業種フィードバック生成（ピックアップ記事のみ）
+            cross_industry_feedback = None
+            if article.is_pickup:
+                cross_industry_feedback = (
+                    await self.report_generator.generate_cross_industry_feedback(
+                        article, report
+                    )
+                )
+
             # Firestoreに保存
             await self.firestore.update_article_research(
                 params.collection_id,
                 params.article_url,
                 deep_dive_report=report,
                 research_status=ResearchStatus.COMPLETED,
+                cross_industry_feedback=cross_industry_feedback,
             )
 
             logger.info(f"Research completed for: {params.article_url}")
@@ -175,11 +185,23 @@ class ResearcherService:
                 full_report.append(chunk)
                 yield chunk
 
+            report = "".join(full_report)
+
+            # 異業種フィードバック生成（ピックアップ記事のみ）
+            cross_industry_feedback = None
+            if article.is_pickup:
+                cross_industry_feedback = (
+                    await self.report_generator.generate_cross_industry_feedback(
+                        article, report
+                    )
+                )
+
             await self.firestore.update_article_research(
                 params.collection_id,
                 params.article_url,
-                deep_dive_report="".join(full_report),
+                deep_dive_report=report,
                 research_status=ResearchStatus.COMPLETED,
+                cross_industry_feedback=cross_industry_feedback,
             )
             logger.info(f"Research stream completed for: {params.article_url}")
         except Exception as e:

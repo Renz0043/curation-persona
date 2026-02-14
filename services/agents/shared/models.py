@@ -60,6 +60,16 @@ class Article(BaseModel):
     published_at: Optional[datetime] = None
 
 
+class CrossIndustryPerspective(BaseModel):
+    industry: str
+    expert_comment: str
+
+
+class CrossIndustryFeedback(BaseModel):
+    abstracted_challenge: str
+    perspectives: list[CrossIndustryPerspective]
+
+
 class ScoredArticle(Article):
     id: Optional[str] = None
     scoring_status: ScoringStatus = ScoringStatus.PENDING
@@ -68,6 +78,7 @@ class ScoredArticle(Article):
     is_pickup: bool = False
     research_status: Optional[ResearchStatus] = None
     deep_dive_report: Optional[str] = None
+    cross_industry_feedback: Optional[CrossIndustryFeedback] = None
     user_rating: Optional[int] = Field(None, ge=1, le=5)
     user_comment: Optional[str] = None
 

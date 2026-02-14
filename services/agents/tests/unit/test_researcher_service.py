@@ -69,6 +69,7 @@ class Test_ResearcherService:
             "https://example.com/ai",
             deep_dive_report="# 深掘りレポート\n詳細な分析...",
             research_status=ResearchStatus.COMPLETED,
+            cross_industry_feedback=None,
         )
 
     async def test_記事未発見時に処理をスキップする(
@@ -174,6 +175,7 @@ class Test_ResearcherService:
             "https://example.com/ai",
             deep_dive_report="チャンク1チャンク2チャンク3",
             research_status=ResearchStatus.COMPLETED,
+            cross_industry_feedback=None,
         )
 
     async def test_ストリーミングで記事未発見時にValueErrorが発生する(
