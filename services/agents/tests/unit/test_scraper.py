@@ -59,6 +59,37 @@ HTML_WITHOUT_DESCRIPTION = """
 </html>
 """
 
+HTML_WITH_OG_IMAGE = """
+<html>
+<head>
+<title>Test</title>
+<meta property="og:image" content="https://example.com/image.jpg">
+<meta property="og:description" content="OG説明文です">
+</head>
+<body><p>本文</p></body>
+</html>
+"""
+
+HTML_WITH_TWITTER_IMAGE_ONLY = """
+<html>
+<head>
+<title>Test</title>
+<meta name="twitter:image" content="https://example.com/twitter.jpg">
+</head>
+<body><p>本文</p></body>
+</html>
+"""
+
+HTML_WITHOUT_IMAGE = """
+<html>
+<head>
+<title>Test</title>
+<meta property="og:description" content="説明文">
+</head>
+<body><p>本文</p></body>
+</html>
+"""
+
 ROBOTS_ALLOW_ALL = "User-agent: *\nAllow: /\n"
 ROBOTS_DISALLOW_GOOGLEBOT = "User-agent: Googlebot\nDisallow: /\n"
 
@@ -171,12 +202,28 @@ class Test_MetaDescription:
             Article(title="記事2", url="https://example.com/2", source="test", source_type=SourceType.RSS),
         ]
 
-        with patch.object(scraper, "fetch_meta_description", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.side_effect = ["説明文1", None]
+        with patch.object(scraper, "fetch_meta", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.side_effect = [
+                {"description": "説明文1", "og_image": None},
+                {"description": None, "og_image": None},
+            ]
             await scraper.fetch_meta_descriptions(articles)
 
         assert articles[0].meta_description == "説明文1"
         assert articles[1].meta_description is None
+
+    async def test_fetch_meta_allでog_imageも一括更新される(self):
+        scraper = WebScraper()
+        articles = [
+            Article(title="記事1", url="https://example.com/1", source="test", source_type=SourceType.RSS),
+        ]
+
+        with patch.object(scraper, "fetch_meta", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = {"description": "説明文", "og_image": "https://example.com/img.jpg"}
+            await scraper.fetch_meta_all(articles)
+
+        assert articles[0].meta_description == "説明文"
+        assert articles[0].og_image == "https://example.com/img.jpg"
 
     async def test_fetch_meta_description失敗時はNoneを返す(self):
         scraper = WebScraper()
@@ -191,3 +238,22 @@ class Test_MetaDescription:
             result = await scraper.fetch_meta_description("https://example.com/fail")
 
         assert result is None
+
+
+class Test_OgImage:
+    def test_og_imageが抽出される(self):
+        scraper = WebScraper()
+        result = scraper._extract_meta(HTML_WITH_OG_IMAGE)
+        assert result["og_image"] == "https://example.com/image.jpg"
+        assert result["description"] == "OG説明文です"
+
+    def test_og_imageがない場合twitter_imageにフォールバックする(self):
+        scraper = WebScraper()
+        result = scraper._extract_meta(HTML_WITH_TWITTER_IMAGE_ONLY)
+        assert result["og_image"] == "https://example.com/twitter.jpg"
+
+    def test_画像がない場合Noneを返す(self):
+        scraper = WebScraper()
+        result = scraper._extract_meta(HTML_WITHOUT_IMAGE)
+        assert result["og_image"] is None
+        assert result["description"] == "説明文"
