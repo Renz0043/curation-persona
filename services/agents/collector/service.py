@@ -59,8 +59,8 @@ class CollectorService:
         # URL重複除去
         unique_articles = self._deduplicate(all_articles)
 
-        # meta description 並列取得
-        await self.scraper.fetch_meta_descriptions(unique_articles)
+        # meta description + OGP画像 並列取得
+        await self.scraper.fetch_meta_all(unique_articles)
 
         # ScoredArticle に変換
         scored_articles = [

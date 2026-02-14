@@ -26,8 +26,8 @@ BOT_USER_AGENTS = [
 class WebScraper:
     """記事本文スクレイピング（robots.txt準拠・逐次取得）"""
 
-    async def fetch_meta_description(self, url: str) -> str | None:
-        """URLから<meta name="description">または<meta property="og:description">を取得する。"""
+    async def fetch_meta(self, url: str) -> dict[str, str | None]:
+        """URLからmeta description と og:image を取得する。"""
         try:
             async with httpx.AsyncClient(
                 headers={"User-Agent": USER_AGENT},
@@ -36,41 +36,74 @@ class WebScraper:
             ) as client:
                 response = await client.get(url)
                 response.raise_for_status()
-                return self._extract_meta_description(response.text)
+                return self._extract_meta(response.text)
         except Exception:
-            logger.warning(f"meta description取得失敗: {url}", exc_info=True)
-            return None
+            logger.warning(f"メタ情報取得失敗: {url}", exc_info=True)
+            return {"description": None, "og_image": None}
 
-    async def fetch_meta_descriptions(
+    async def fetch_meta_description(self, url: str) -> str | None:
+        """URLから<meta name="description">または<meta property="og:description">を取得する。"""
+        result = await self.fetch_meta(url)
+        return result["description"]
+
+    async def fetch_meta_all(
         self, articles: list[Article], concurrency: int = 10
     ) -> None:
-        """記事リストのmeta_descriptionを並列取得してin-place更新する。"""
+        """記事リストのmeta_description・og_imageを並列取得してin-place更新する。"""
         semaphore = asyncio.Semaphore(concurrency)
 
         async def _fetch(article: Article) -> None:
             async with semaphore:
-                desc = await self.fetch_meta_description(article.url)
-                if desc:
-                    article.meta_description = desc
+                meta = await self.fetch_meta(article.url)
+                if meta["description"]:
+                    article.meta_description = meta["description"]
+                if meta["og_image"]:
+                    article.og_image = meta["og_image"]
 
         await asyncio.gather(*[_fetch(a) for a in articles])
 
-    def _extract_meta_description(self, html: str) -> str | None:
-        """HTMLからog:descriptionまたはmeta descriptionを抽出する。"""
+    async def fetch_meta_descriptions(
+        self, articles: list[Article], concurrency: int = 10
+    ) -> None:
+        """記事リストのmeta_descriptionを並列取得してin-place更新する。（後方互換）"""
+        await self.fetch_meta_all(articles, concurrency)
+
+    def _extract_meta(self, html: str) -> dict[str, str | None]:
+        """HTMLからmeta descriptionとog:imageを抽出する。"""
         soup = BeautifulSoup(html, "html.parser")
         head = soup.find("head")
         if not head:
-            return None
+            return {"description": None, "og_image": None}
 
-        # og:description を優先
+        description = self._extract_meta_description_from_head(head)
+        og_image = self._extract_og_image(head)
+        return {"description": description, "og_image": og_image}
+
+    def _extract_meta_description(self, html: str) -> str | None:
+        """HTMLからog:descriptionまたはmeta descriptionを抽出する。"""
+        return self._extract_meta(html)["description"]
+
+    def _extract_meta_description_from_head(self, head) -> str | None:
+        """headタグからdescriptionを抽出する。"""
         og = head.find("meta", attrs={"property": "og:description"})
         if og and og.get("content"):
             return og["content"].strip()
 
-        # meta name="description" にフォールバック
         meta = head.find("meta", attrs={"name": "description"})
         if meta and meta.get("content"):
             return meta["content"].strip()
+
+        return None
+
+    def _extract_og_image(self, head) -> str | None:
+        """headタグからog:imageを抽出する。twitter:imageにフォールバック。"""
+        og = head.find("meta", attrs={"property": "og:image"})
+        if og and og.get("content"):
+            return og["content"].strip()
+
+        twitter = head.find("meta", attrs={"name": "twitter:image"})
+        if twitter and twitter.get("content"):
+            return twitter["content"].strip()
 
         return None
 
