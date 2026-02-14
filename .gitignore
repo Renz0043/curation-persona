@@ -52,6 +52,8 @@ ui-debug.log
 *.json
 !package.json
 !tsconfig.json
+!firebase.json
+!.firebaserc
 service-account*.json
 
 # Testing
