@@ -1,8 +1,16 @@
 import logging
 from collections.abc import AsyncIterator
+from datetime import datetime
 
 from shared.firestore_client import FirestoreClient
-from shared.models import ResearchArticleParams, ResearchStatus
+from shared.models import (
+    ResearchArticleParams,
+    ResearchStatus,
+    ScoredArticle,
+    ScoringStatus,
+    SourceType,
+)
+from shared.scraper import WebScraper
 
 from .report_generator import ReportGenerator
 
@@ -16,9 +24,67 @@ class ResearcherService:
         self,
         firestore: FirestoreClient,
         report_generator: ReportGenerator,
+        scraper: WebScraper | None = None,
     ):
         self.firestore = firestore
         self.report_generator = report_generator
+        self.scraper = scraper or WebScraper()
+
+    async def create_bookmark(self, user_id: str, url: str) -> dict:
+        """ブックマーク記事を保存し、深掘りレポートを生成する。"""
+        logger.info(f"create_bookmark: user_id={user_id}, url={url}")
+
+        # 1. bookmark コレクション確保
+        collection_id = f"bm_{user_id}"
+        await self.firestore.ensure_bookmark_collection(user_id)
+
+        # 2. WebScraper でコンテンツ取得
+        article = await self._scrape_bookmark(url)
+
+        # 3. Firestore に記事保存
+        await self.firestore.save_bookmark_article(collection_id, user_id, article)
+
+        # 4. research() を実行
+        params = ResearchArticleParams(
+            user_id=user_id,
+            collection_id=collection_id,
+            article_url=url,
+        )
+        await self.research(params)
+        return {"status": "completed", "article_url": url}
+
+    async def _scrape_bookmark(self, url: str) -> ScoredArticle:
+        """URLからコンテンツを取得し ScoredArticle を生成する。"""
+        title = url
+        content = None
+        meta_description = None
+
+        try:
+            content = await self.scraper.scrape(url)
+            meta_description = await self.scraper.fetch_meta_description(url)
+            if content:
+                # 本文の先頭からタイトルを推定（最初の非空行）
+                for line in content.split("\n"):
+                    stripped = line.strip()
+                    if stripped:
+                        title = stripped[:100]
+                        break
+        except Exception:
+            logger.warning(f"ブックマークスクレイピング失敗: {url}", exc_info=True)
+
+        return ScoredArticle(
+            title=title,
+            url=url,
+            source="bookmark",
+            source_type=SourceType.BOOKMARK,
+            content=content,
+            meta_description=meta_description,
+            scoring_status=ScoringStatus.SCORED,
+            relevance_score=1.0,
+            relevance_reason="ユーザーが手動でブックマーク",
+            is_pickup=True,
+            research_status=ResearchStatus.PENDING,
+        )
 
     async def research(self, params: ResearchArticleParams) -> dict:
         logger.info(

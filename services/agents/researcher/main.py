@@ -1,11 +1,17 @@
+import logging
+
 import uvicorn
 from a2a.server.apps import A2AFastAPIApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
-from fastapi import FastAPI
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 
-from .agent_executor import ResearcherAgentExecutor
+from shared.models import BookmarkRequest
+
+from .agent_executor import ResearcherAgentExecutor, firestore, service
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -40,6 +46,23 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health():
         return {"status": "healthy"}
+
+    @app.post("/api/bookmarks")
+    async def create_bookmark(
+        request: BookmarkRequest, background_tasks: BackgroundTasks
+    ):
+        # API キー検証
+        user = await firestore.get_user_by_api_key(request.api_key)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+
+        user_id = user["user_id"]
+        logger.info(f"Bookmark request: user_id={user_id}, url={request.url}")
+
+        # バックグラウンドで深掘り実行
+        background_tasks.add_task(service.create_bookmark, user_id, request.url)
+
+        return {"status": "accepted", "url": request.url}
 
     return app
 

@@ -24,6 +24,9 @@ def mock_firestore_client():
     client.get_latest_collection = AsyncMock(return_value=None)
     client.update_article_embeddings = AsyncMock()
     client.find_similar_articles = AsyncMock(return_value=[])
+    client.get_user_by_api_key = AsyncMock(return_value=None)
+    client.ensure_bookmark_collection = AsyncMock(return_value="bm_test_user")
+    client.save_bookmark_article = AsyncMock()
     return client
 
 

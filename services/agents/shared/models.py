@@ -38,6 +38,7 @@ class SourceType(str, Enum):
     WEBSITE = "website"
     NEWSLETTER = "newsletter"
     API = "api"
+    BOOKMARK = "bookmark"
 
 
 class SourceConfig(BaseModel):
@@ -83,6 +84,11 @@ class ArticleCollection(BaseModel):
 class ScoreArticlesParams(BaseModel):
     user_id: str
     collection_id: str
+
+
+class BookmarkRequest(BaseModel):
+    url: str
+    api_key: str
 
 
 class ResearchArticleParams(BaseModel):

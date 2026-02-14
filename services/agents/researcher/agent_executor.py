@@ -9,6 +9,7 @@ from a2a.types import DataPart, Part, TextPart
 from shared.firestore_client import FirestoreClient
 from shared.gemini_client import GeminiClient
 from shared.models import ResearchArticleParams
+from shared.scraper import WebScraper
 
 from .report_generator import ReportGenerator
 from .service import ResearcherService
@@ -18,7 +19,8 @@ logger = logging.getLogger(__name__)
 firestore = FirestoreClient()
 gemini_client = GeminiClient("pro")
 report_generator = ReportGenerator(gemini_client)
-service = ResearcherService(firestore, report_generator)
+scraper = WebScraper()
+service = ResearcherService(firestore, report_generator, scraper)
 
 
 class ResearcherAgentExecutor(AgentExecutor):

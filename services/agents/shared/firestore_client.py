@@ -43,6 +43,53 @@ class FirestoreClient:
             logger.warning(f"Firestore unavailable, using stub mode: {e}")
             self.db = None
 
+    async def get_user_by_api_key(self, api_key: str) -> Optional[dict]:
+        """API キーからユーザーを検索する。"""
+        if self.db is None:
+            logger.info(f"[STUB] get_user_by_api_key(***)")
+            return {"user_id": "stub_user"}
+        query = self.db.collection("users").where("api_key", "==", api_key).limit(1)
+        async for doc in query.stream():
+            data = doc.to_dict()
+            data["user_id"] = doc.id
+            return data
+        return None
+
+    async def ensure_bookmark_collection(self, user_id: str) -> str:
+        """ブックマーク用コレクションを確保する。既存なら何もしない。"""
+        collection_id = f"bm_{user_id}"
+        if self.db is None:
+            logger.info(f"[STUB] ensure_bookmark_collection({user_id})")
+            return collection_id
+        doc_ref = self.db.collection("collections").document(collection_id)
+        doc = await doc_ref.get()
+        if not doc.exists:
+            await doc_ref.set(
+                {
+                    "id": collection_id,
+                    "user_id": user_id,
+                    "date": "",
+                    "status": CollectionStatus.COMPLETED.value,
+                    "created_at": datetime.now(),
+                }
+            )
+            logger.info(f"Bookmark collection created: {collection_id}")
+        return collection_id
+
+    async def save_bookmark_article(
+        self, collection_id: str, user_id: str, article: ScoredArticle
+    ):
+        """ブックマーク記事を articles コレクションに保存する。"""
+        article_id = generate_article_id(collection_id, article.url)
+        article.id = article_id
+        if self.db is None:
+            logger.info(f"[STUB] save_bookmark_article({article_id})")
+            return
+        article_data = article.model_dump(mode="json")
+        article_data["collection_id"] = collection_id
+        article_data["user_id"] = user_id
+        await self.db.collection("articles").document(article_id).set(article_data)
+
     async def get_user(self, user_id: str) -> dict:
         if self.db is None:
             logger.info(f"[STUB] get_user({user_id})")
