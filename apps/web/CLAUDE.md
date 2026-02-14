@@ -20,6 +20,7 @@
 | `/dashboard` | `app/dashboard/page.tsx` | モック | 今日のブリーフィング画面。モック記事5件 |
 | `/dashboard/archive` | `app/dashboard/archive/page.tsx` | モック | アーカイブ検索。日付ツリー・検索・フィルター・並替。モック10件 |
 | `/article/[id]` | `app/article/[id]/page.tsx` | モック | 記事詳細・Deep Diveレポート・異業種フィードバック表示 |
+| `/dashboard/submit` | `app/dashboard/submit/page.tsx` | 実API連携+モック | 記事追加。URL投稿フォーム（実API）・投稿履歴（モック） |
 | `/dashboard/profile` | `app/dashboard/profile/page.tsx` | モック | 興味・関心プロファイル。AI分析・RSSフィード管理・APIキー・キュレーション設定 |
 
 ## レイアウト構成

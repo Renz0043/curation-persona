@@ -2,11 +2,12 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { Newspaper, FolderOpen, User, LogOut } from "lucide-react";
+import { Newspaper, FolderOpen, User, PlusCircle, LogOut } from "lucide-react";
 
 const navItems = [
   { href: "/dashboard", label: "今日のブリーフィング", icon: Newspaper },
   { href: "/dashboard/archive", label: "アーカイブ", icon: FolderOpen },
+  { href: "/dashboard/submit", label: "記事を追加", icon: PlusCircle },
   { href: "/dashboard/profile", label: "興味・関心プロファイル", icon: User },
 ];
 
