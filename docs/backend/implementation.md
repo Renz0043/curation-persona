@@ -57,7 +57,7 @@ graph TB
             Researcher["<b>Researcher Agent</b><br/>Python / FastAPI<br/>Port 8003"]
         end
 
-        Firestore[("<b>Cloud Firestore</b><br/>users/ collections/")]
+        Firestore[("<b>Cloud Firestore</b><br/>users/ collections/ articles/")]
         VertexAI["<b>Vertex AI</b><br/>Gemini Flash / Pro"]
     end
 
@@ -105,6 +105,7 @@ graph TB
         gemini_client["gemini_client.py<br/><i>Gemini Flash/Pro</i>"]
         scraper["scraper.py<br/><i>WebScraper（コンテンツ補完）</i>"]
         retry["retry.py<br/><i>指数バックオフ</i>"]
+        mcp["mcp_server.py<br/><i>FastMCP（外部公開）</i>"]
 
         subgraph fetchers ["fetchers/"]
             base["BaseFetcher<br/><i>ABC</i>"]
@@ -271,10 +272,11 @@ services/agents/
 │   ├── main.py                # A2A Server エントリポイント（A2AFastAPIApplication）
 │   ├── agent_executor.py      # AgentExecutor 実装
 │   ├── service.py             # ビジネスロジック
-│   ├── report_generator.py    # レポート生成
+│   ├── report_generator.py    # レポート生成 + 異業種フィードバック
 │   ├── Dockerfile
 │   └── requirements.txt
 │
+├── mcp_server.py              # MCPサーバー（Claude Desktop連携）
 └── pyproject.toml              # 共通依存関係
 ```
 
@@ -344,6 +346,7 @@ class ResearchStatus(str, Enum):
     PENDING = "pending"          # 詳細調査待ち
     RESEARCHING = "researching"  # 詳細調査中
     COMPLETED = "completed"      # 詳細調査完了
+    FAILED = "failed"            # 失敗
 
 # ソース設定
 class SourceType(str, Enum):
@@ -352,6 +355,7 @@ class SourceType(str, Enum):
     WEBSITE = "website"          # Webサイト監視
     NEWSLETTER = "newsletter"    # メルマガ
     API = "api"                  # 外部API
+    BOOKMARK = "bookmark"        # ブックマーク
 
 class SourceConfig(BaseModel):
     """記事ソースの設定"""
@@ -374,10 +378,22 @@ class Article(BaseModel):
     source: str                  # ソース名（SourceConfig.name）
     source_type: SourceType      # ソース種別
     content: Optional[str] = None
+    summary: Optional[str] = None
+    meta_description: Optional[str] = None
     published_at: Optional[datetime] = None
+
+class CrossIndustryPerspective(BaseModel):
+    industry: str
+    expert_comment: str
+
+class CrossIndustryFeedback(BaseModel):
+    abstracted_challenge: str
+    perspectives: list[CrossIndustryPerspective]
 
 class ScoredArticle(Article):
     """関連性スコア付きの記事"""
+    id: Optional[str] = None
+
     # スコアリング関連（全記事共通）
     scoring_status: ScoringStatus = ScoringStatus.PENDING
     relevance_score: float = 0.0  # 0.0 - 1.0
@@ -387,6 +403,7 @@ class ScoredArticle(Article):
     is_pickup: bool = False
     research_status: Optional[ResearchStatus] = None  # ピックアップ時のみ設定
     deep_dive_report: Optional[str] = None
+    cross_industry_feedback: Optional[CrossIndustryFeedback] = None
 
     # ユーザー評価
     user_rating: Optional[int] = Field(None, ge=1, le=5)  # 1-5 の5段階評価
@@ -406,6 +423,10 @@ class ScoreArticlesParams(BaseModel):
     """score_articles スキル: Collector → Librarian"""
     user_id: str
     collection_id: str
+
+class BookmarkRequest(BaseModel):
+    url: str
+    api_key: str
 
 class ResearchArticleParams(BaseModel):
     """research_article スキル: Librarian → Researcher"""
@@ -1617,7 +1638,7 @@ class GeminiClient:
         )
         return json.loads(response.text)
 
-    async def embed(self, text: str) -> list[float]:
+    async def embed_content(self, text: str) -> list[float]:
         """テキストをベクトル化"""
         response = await self.client.aio.models.embed_content(
             model="text-embedding-004",

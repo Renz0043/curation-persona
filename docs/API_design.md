@@ -344,6 +344,21 @@ Response:
 - バックグラウンドで Web スクレイピング + 深掘りレポート生成を実行
 - **実装済み**: `Researcher Agent POST /api/bookmarks`
 
+### 5.5 MCP Server（Claude Desktop 等からの利用）
+
+FastMCP (stdio transport) を使用した外部公開 API。Claude Desktop の `.mcp.json` 経由で接続。
+
+**実装済み**: `services/agents/mcp_server.py`
+
+| ツール名 | 説明 |
+|---------|------|
+| `get_todays_briefing` | 今日のキュレーション記事を取得 |
+| `get_collection_by_date` | 日付を指定して記事コレクションを取得 |
+| `get_article_detail` | 記事の詳細（深掘りレポート・異業種FB含む）を取得 |
+| `get_interest_profile` | ユーザーの興味プロファイルを取得 |
+| `get_high_rated_articles` | 高評価記事の一覧を取得 |
+| `search_similar_articles` | ベクトル検索で類似記事を検索 |
+
 ---
 
 ## 6. 内部 API（Agent 間通信）
@@ -389,5 +404,8 @@ Response:
 | 深掘り SSE ストリーミング | **バックエンド実装済み** / API Route 未実装 | `researcher/service.py` + A2A |
 | ブックマーク登録 | **実装済み** | `researcher/main.py POST /api/bookmarks` |
 | Collector 手動トリガー | **A2A スキル実装済み** / HTTP エンドポイント未実装 | `collector/service.py` |
-| Firebase Auth 認証 | **未実装** | — |
-| Firestore Security Rules | **未設定** | — |
+| Firebase Auth 認証 | **SDK 初期設定済み** / ログイン UI 未実装 | `apps/web/src/lib/firebase.ts` |
+| Firestore Security Rules | **設定済み**（Emulator 用） | `firestore.rules` |
+| MCP Server（6ツール） | **実装済み** | `mcp_server.py` |
+| Gemini Embedding + ベクトル検索 | **実装済み** | `gemini_client.embed_content()` / `firestore_client.find_similar_articles()` |
+| 異業種フィードバック | **実装済み** | `researcher/report_generator.py` |

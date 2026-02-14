@@ -40,7 +40,7 @@ graph TD
     end
 
     subgraph "Data Layer"
-        Firestore[(Firestore<br/>Collections / Users)]
+        Firestore[(Firestore<br/>Collections / Users / Articles)]
     end
 
     subgraph "External"
@@ -49,6 +49,10 @@ graph TD
 
     subgraph "Frontend"
         Dashboard[Next.js Dashboard<br/>Firebase Hosting]
+    end
+
+    subgraph "MCP"
+        MCPServer[MCP Server<br/>FastMCP / stdio]
     end
 
     Scheduler -->|HTTP| Collector
@@ -62,6 +66,7 @@ graph TD
     Researcher --> Firestore
 
     Dashboard --> Firestore
+    MCPServer --> Firestore
 ```
 
 ### 2.2 コンポーネント責務
@@ -72,6 +77,7 @@ graph TD
 | **Librarian Agent** | ユーザー評価ベースのLLMスコアリング | Cloud Run, Python, Gemini Flash |
 | **Researcher Agent** | 詳細レポート生成、Firestore保存 | Cloud Run, Python, Gemini Pro |
 | **Dashboard** | レポート表示、ユーザー認証、評価・深掘りリクエスト | Next.js, Firebase Auth |
+| **MCP Server** | キュレーション結果・興味プロファイルの外部公開 | FastMCP, stdio transport |
 
 ---
 
@@ -82,49 +88,54 @@ graph TD
 ```
 firestore/
 ├── users/{userId}
-│   ├── sources: [                    // 記事ソース設定（拡張可能）
-│   │     {
-│   │       id: string                // "src_001"
-│   │       type: "rss" | "website" | "newsletter" | "api"
-│   │       name: string              // "Hacker News"
-│   │       enabled: boolean
-│   │       config: {                 // タイプ固有の設定
-│   │         url?: string
-│   │         selector?: string       // website用
-│   │         email_filter?: string   // newsletter用
-│   │       }
-│   │     }
-│   │   ]
-│   ├── interestProfile: string | null  // LLM生成の興味プロファイル（永続保持）
-│   ├── interestProfileUpdatedAt: timestamp | null  // プロファイル最終更新日時
-│   ├── preferences: {
-│   │     dailyReportTime: string     // "06:00"
-│   │   }
+│   ├── user_id: string
+│   ├── sources: SourceConfig[]
+│   ├── api_key?: string                     // ブックマークAPI用
+│   ├── interestProfile?: string             // LLM生成の興味プロファイル
+│   ├── interestProfileUpdatedAt?: timestamp
 │   └── createdAt: timestamp
 │
-└── collections/{collectionId}        // 日次の記事コレクション
-    ├── userId: string
-    ├── date: string                  // "2025-01-15"
-    ├── articles: [
-    │     {
-    │       title: string
-    │       url: string
-    │       source: string
-    │       sourceType: "rss" | "website" | "newsletter" | "api"
-    │       content: string
-    │       publishedAt: timestamp
-    │       scoringStatus: "pending" | "scoring" | "scored"
-    │       relevanceScore: number    // 0.0 - 1.0
-    │       relevanceReason: string   // 過去の高評価記事との関連理由
-    │       isPickup: boolean
-    │       researchStatus: "pending" | "researching" | "completed" | null
-    │       deepDiveReport: string | null
-    │       userRating: number | null // 1-5 の5段階評価
-    │       userComment: string | null // ユーザーコメント
-    │     }
-    │   ]
-    ├── status: "collecting" | "scoring" | "researching" | "completed" | "failed"
-    └── createdAt: timestamp
+├── collections/{collectionId}
+│   ├── id: string
+│   ├── user_id: string
+│   ├── date: string                         // "2025-01-15"
+│   ├── status: CollectionStatus             // collecting|scoring|researching|completed|failed
+│   └── created_at: timestamp
+│   // ※ articles 配列は含まない（トップレベルコレクションに分離済み）
+│
+└── articles/{articleId}                      // articleId = "{collectionId}_{urlHash8桁}"
+    ├── id: string
+    ├── collection_id: string                // 所属コレクション
+    ├── user_id: string                      // Security Rules 用
+    ├── title: string
+    ├── url: string
+    ├── source: string
+    ├── source_type: SourceType              // rss|website|newsletter|api|bookmark
+    ├── summary?: string
+    ├── content?: string
+    ├── meta_description?: string
+    ├── published_at?: timestamp
+    │
+    │  // スコアリング
+    ├── scoring_status: ScoringStatus        // pending|scoring|scored
+    ├── relevance_score: number              // 0.0 - 1.0
+    ├── relevance_reason: string
+    ├── is_pickup: boolean
+    ├── title_embedding?: Vector             // Gemini Embedding (768次元)
+    │
+    │  // 深掘りレポート
+    ├── research_status?: ResearchStatus     // pending|researching|completed|failed
+    ├── deep_dive_report?: string            // Markdown レポート
+    ├── cross_industry_feedback?: {          // is_pickup=true のみ
+    │     abstracted_challenge: string,
+    │     perspectives: [
+    │       { industry: string, expert_comment: string }
+    │     ]
+    │   }
+    │
+    │  // ユーザーフィードバック
+    ├── user_rating?: number                 // 1-5
+    └── user_comment?: string
 ```
 
 ### 3.2 A2A メッセージ形式
@@ -335,15 +346,19 @@ RETRY_CONFIG = {
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ユーザーは自分のデータのみアクセス可能
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;  // バックエンドのみ
     }
-
     match /collections/{collectionId} {
-      allow read: if request.auth != null &&
-                     resource.data.userId == request.auth.uid;
-      allow write: if false; // バックエンドのみ書き込み可
+      allow read: if request.auth != null
+                  && resource.data.user_id == request.auth.uid;
+      allow write: if false;
+    }
+    match /articles/{articleId} {
+      allow read: if request.auth != null
+                  && resource.data.user_id == request.auth.uid;
+      allow write: if false;
     }
   }
 }
@@ -412,9 +427,9 @@ logger.info("Article processed", extra={
 
 > ハッカソン後に本番運用する場合の検討事項
 
+- [x] MCPサーバー経由でのキュレーション結果・興味プロファイル公開（ADR-012 / 実装済み）
+- [x] Gemini Embedding 統合によるベクトル類似記事検索（ADR-003 / 実装済み）
 - [ ] マルチテナント対応（ユーザー増加時のスケーリング）
-- [ ] MCPサーバー経由での評価・コメントDB公開（ADR-012）
-- [ ] Vector Searchによるハイブリッドスコアリング再導入（ADR-003）
 - [ ] CI/CD パイプライン構築
 - [ ] 負荷テスト実施
 - [ ] SLA定義とモニタリング強化

@@ -174,15 +174,21 @@
 
 ---
 
-## ADR-012: 将来のMCPサーバー構想
+## ADR-012: MCPサーバー実装
 
-- **決定**: 評価・コメントDBを将来MCPサーバー経由で外部公開可能にする構想を記録
-- **スコープ**: ハッカソンMVPの範囲外。設計時に拡張性を考慮するのみ
-- **構想**:
+- **決定**: FastMCP（stdio transport）を使用してMCPサーバーを実装
+- **ツール一覧**（6つ）:
+  - `get_todays_briefing` — 本日のブリーフィング取得
+  - `get_collection_by_date` — 日付指定でコレクション取得
+  - `get_article_detail` — 記事詳細取得
+  - `get_interest_profile` — ユーザー興味プロファイル取得
+  - `get_high_rated_articles` — 高評価記事一覧取得
+  - `search_similar_articles` — ベクトル類似記事検索
+- **利用方法**: Claude Desktop の `.mcp.json` から利用可能
+- **理由**:
   - ユーザーの評価・コメントデータをMCPサーバー経由で参照可能にする
   - 他のAIエージェントやツールがユーザーの興味・関心データにアクセスできる
   - MCP（Tool提供）と A2A（エージェント間通信）の補完関係を活用
-- **設計への影響**: Firestoreのスキーマ設計時に、将来の外部公開を意識したデータ構造にする（例: 評価データの正規化、アクセス制御の考慮）
 
 ---
 
@@ -202,3 +208,56 @@
   - スクレイピング失敗は記事単位でスキップし、パイプライン全体は止めない
   - `<article>` or `<main>` タグ優先、フォールバックで `<body>` 全体を取得
 - **設定**: `scrape_max_count`（デフォルト10）、`scrape_delay_sec`（デフォルト2.0）
+
+---
+
+## ADR-014: 記事データのトップレベルコレクション分離
+
+- **決定**: 記事データを `collections/{collectionId}.articles[]` 配列から `articles/{articleId}` トップレベルコレクションに分離
+- **却下した案**:
+  - サブコレクション（`collections/{collectionId}/articles/{articleId}`）→ クロスコレクション検索（ブックマーク横断）が困難
+- **理由**:
+  - Firestore の配列更新制限（1MB ドキュメントサイズ制限）を回避
+  - Security Rules で `user_id` ベースのアクセス制御が容易
+  - `collection_id` フィールドで所属コレクションを参照可能
+  - ブックマーク記事の横断検索が可能
+- **ID生成ルール**: `articleId = "{collectionId}_{urlHash8桁}"`
+
+---
+
+## ADR-015: Gemini Embedding 統合とベクトル類似記事検索
+
+- **決定**: Gemini text-embedding-004 で記事タイトル+meta_description をベクトル化し、Firestore Vector Search で類似記事検索
+- **却下した案**:
+  - Vertex AI Vector Search（別途インデックスサービスが必要、コスト高）
+- **理由**:
+  - Firestore ネイティブの Vector Search 機能（2024年GA）により追加インフラ不要
+  - 768次元のベクトル、COSINE距離
+  - MCPサーバーの `search_similar_articles` ツールで公開
+  - ADR-003（Vector Search 保留）を部分的に解消
+- **実装**: `gemini_client.embed_content()` + `firestore_client.find_similar_articles()`
+
+---
+
+## ADR-016: Safari ブックマーク経由の自動深掘り
+
+- **決定**: Safari のブックマーク（Apple Shortcuts）から記事URLを受け取り、Webスクレイピング → 自動深掘りレポート生成
+- **理由**:
+  - モバイルからの記事保存ワークフローを実現
+  - Firebase Auth が使えない環境向けに API Key 認証を採用
+  - ブックマーク記事は専用コレクション `bm_{userId}` に格納
+  - `source_type: bookmark` で通常記事と区別
+- **API**: `POST /api/bookmarks { url, api_key }`
+
+---
+
+## ADR-017: 異業種フィードバック機能
+
+- **決定**: 深掘りレポート完成後、記事の課題を抽象化し異業種の専門家視点でフィードバックを生成
+- **理由**:
+  - エコーチェンバー防止が目的
+  - `is_pickup=True` の記事のみ対象
+  - 12業種リストからランダムに2業種を選出
+  - 各専門家コメント500文字以内
+- **データ構造**: `CrossIndustryFeedback { abstracted_challenge, perspectives[{ industry, expert_comment }] }`
+- **保存先**: `articles/{articleId}.cross_industry_feedback`
