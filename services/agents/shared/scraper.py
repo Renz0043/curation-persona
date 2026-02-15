@@ -4,6 +4,7 @@ import re
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 
+import html_to_markdown
 import httpx
 from bs4 import BeautifulSoup
 
@@ -182,18 +183,21 @@ class WebScraper:
         return True
 
     def _extract_main_content(self, html: str) -> str:
-        """HTMLから本文を抽出する。"""
+        """HTMLから本文を抽出し、Markdown形式で返す。"""
         soup = BeautifulSoup(html, "html.parser")
 
-        for tag in soup.find_all(["script", "style", "nav", "footer", "header", "aside"]):
+        for tag in soup.find_all(
+            ["script", "style", "nav", "footer", "header", "aside", "svg", "img", "picture", "figure"]
+        ):
             tag.decompose()
 
         main = soup.find("article") or soup.find("main")
         if main:
-            text = main.get_text(separator="\n")
+            target_html = str(main)
         else:
             body = soup.find("body")
-            text = body.get_text(separator="\n") if body else soup.get_text(separator="\n")
+            target_html = str(body) if body else str(soup)
 
+        text = html_to_markdown.convert(target_html)
         text = re.sub(r"\n\s*\n+", "\n\n", text)
         return text.strip()
