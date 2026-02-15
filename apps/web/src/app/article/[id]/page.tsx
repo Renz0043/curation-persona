@@ -5,7 +5,6 @@ import { use } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
-  Sparkles,
   ExternalLink,
   CalendarDays,
   Newspaper,
@@ -15,10 +14,155 @@ import {
   Factory,
   MessageSquare,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { Components } from "react-markdown";
 import StarRating from "@/components/StarRating";
 import { useAuth } from "@/lib/auth-context";
 import { subscribeToArticle } from "@/lib/firestore";
 import type { Article } from "@/lib/types";
+
+const markdownComponents: Components = {
+  h1: ({ children }) => (
+    <h1
+      className="text-2xl font-bold mb-4 mt-8"
+      style={{ color: "var(--color-text-dark)", fontFamily: "var(--font-display)" }}
+    >
+      {children}
+    </h1>
+  ),
+  h2: ({ children }) => (
+    <h2
+      className="font-bold mb-4 mt-8"
+      style={{ fontSize: "1.375rem", color: "var(--color-text-dark)", fontFamily: "var(--font-display)" }}
+    >
+      {children}
+    </h2>
+  ),
+  h3: ({ children }) => (
+    <h3
+      className="font-bold mb-3 mt-6"
+      style={{ fontSize: "1.175rem", color: "var(--color-text-dark)", fontFamily: "var(--font-display)" }}
+    >
+      {children}
+    </h3>
+  ),
+  h4: ({ children }) => (
+    <h4
+      className="font-bold mb-2 mt-4"
+      style={{ fontSize: "1rem", color: "var(--color-text-dark)", fontFamily: "var(--font-display)" }}
+    >
+      {children}
+    </h4>
+  ),
+  p: ({ children }) => (
+    <p className="mb-4 text-base" style={{ lineHeight: 1.8, color: "#374151" }}>
+      {children}
+    </p>
+  ),
+  ul: ({ children }) => <ul className="mb-4 ml-6 list-disc">{children}</ul>,
+  ol: ({ children }) => <ol className="mb-4 ml-6 list-decimal">{children}</ol>,
+  li: ({ children }) => (
+    <li className="mb-1.5 text-base" style={{ lineHeight: 1.8, color: "#374151" }}>
+      {children}
+    </li>
+  ),
+  a: ({ href, children }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="no-underline hover:underline"
+      style={{ color: "var(--color-primary)" }}
+    >
+      {children}
+    </a>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote
+      className="mb-4 pl-4 italic"
+      style={{
+        borderLeft: "3px solid var(--color-primary)",
+        color: "var(--color-text-muted)",
+      }}
+    >
+      {children}
+    </blockquote>
+  ),
+  code: ({ children, className }) => {
+    const isBlock = className?.startsWith("language-");
+    if (isBlock) {
+      return (
+        <code
+          className="block overflow-x-auto p-4 mb-4 text-sm rounded-lg"
+          style={{
+            backgroundColor: "var(--color-border-light)",
+            color: "var(--color-text-dark)",
+          }}
+        >
+          {children}
+        </code>
+      );
+    }
+    return (
+      <code
+        className="px-1.5 py-0.5 text-sm rounded"
+        style={{
+          backgroundColor: "var(--color-border-light)",
+          color: "var(--color-text-dark)",
+        }}
+      >
+        {children}
+      </code>
+    );
+  },
+  table: ({ children }) => (
+    <div className="overflow-x-auto mb-4">
+      <table
+        className="w-full text-sm"
+        style={{ borderCollapse: "collapse" }}
+      >
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ children }) => (
+    <thead style={{ backgroundColor: "var(--color-border-light)" }}>
+      {children}
+    </thead>
+  ),
+  th: ({ children }) => (
+    <th
+      className="px-3 py-2 text-left font-semibold"
+      style={{
+        border: "1px solid var(--color-border)",
+        color: "var(--color-text-dark)",
+      }}
+    >
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td
+      className="px-3 py-2"
+      style={{
+        border: "1px solid var(--color-border)",
+        color: "#374151",
+      }}
+    >
+      {children}
+    </td>
+  ),
+  hr: () => (
+    <hr
+      className="my-6"
+      style={{ border: "none", borderTop: "1px solid var(--color-border-light)" }}
+    />
+  ),
+  strong: ({ children }) => (
+    <strong style={{ color: "var(--color-text-dark)" }}>{children}</strong>
+  ),
+};
 
 function formatPublishedAt(date?: Date): string {
   if (!date) return "";
@@ -40,22 +184,26 @@ export default function ArticleDetailPage({
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
+  const [analysisTab, setAnalysisTab] = useState<"report" | number>("report");
   const [feedbackSending, setFeedbackSending] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState(false);
 
   useEffect(() => {
     const unsub = subscribeToArticle(id, (art) => {
       setArticle(art);
       if (art?.user_rating) setRating(art.user_rating);
+      if (art?.user_comment) setComment(art.user_comment);
       setLoading(false);
     });
     return () => unsub();
   }, [id]);
 
   const handleSendFeedback = async () => {
-    if (!article) return;
+    if (!article || rating === 0) return;
     setFeedbackSending(true);
+    setFeedbackSent(false);
     try {
-      await fetch(`/api/collections/${article.collection_id}/feedback`, {
+      const res = await fetch(`/api/collections/${article.collection_id}/feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -64,6 +212,9 @@ export default function ArticleDetailPage({
           comment: comment || undefined,
         }),
       });
+      if (res.ok) {
+        setFeedbackSent(true);
+      }
     } catch (e) {
       console.error("Failed to send feedback:", e);
     } finally {
@@ -140,20 +291,7 @@ export default function ArticleDetailPage({
               <ArrowLeft size={20} />
               ブリーフィングに戻る
             </Link>
-            <div className="flex items-center gap-3">
-              <button
-                className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white transition-all cursor-pointer border-none"
-                style={{
-                  backgroundColor: "var(--color-primary)",
-                  borderRadius: "var(--radius-lg)",
-                  opacity: 0.5,
-                }}
-                disabled
-              >
-                <Sparkles size={20} />
-                カスタムレポート生成
-              </button>
-            </div>
+            <div className="flex items-center gap-3" />
           </div>
         </div>
       </nav>
@@ -260,353 +398,326 @@ export default function ArticleDetailPage({
           </div>
         </header>
 
-        {/* Grid: Main + Sidebar */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-          {/* Main Content Column */}
-          <div className={hasCrossIndustry ? "lg:col-span-8" : "lg:col-span-12"}>
-            {/* Original Article Section */}
-            <section className="mb-12">
-              <div
-                className="flex items-center justify-between mb-8 pb-4"
-                style={{ borderBottom: "1px solid var(--color-border-light)" }}
-              >
-                <div className="flex items-center gap-3">
-                  <span
-                    className="flex items-center justify-center w-8 h-8 rounded-full"
-                    style={{
-                      backgroundColor: "var(--color-border-light)",
-                      color: "var(--color-text-dark)",
-                    }}
-                  >
-                    <FileText size={20} />
-                  </span>
-                  <h2
-                    className="text-xl font-bold"
-                    style={{ color: "var(--color-text-dark)" }}
-                  >
-                    元記事本文
-                  </h2>
-                </div>
-                <a
-                  href={article.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm font-medium no-underline px-3 py-1.5 transition-colors"
+        {/* Full-width Content */}
+        <div>
+          {/* Original Article Section */}
+          <section className="mb-12">
+            <div
+              className="flex items-center justify-between mb-8 pb-4"
+              style={{ borderBottom: "1px solid var(--color-border-light)" }}
+            >
+              <div className="flex items-center gap-3">
+                <span
+                  className="flex items-center justify-center w-8 h-8 rounded-full"
                   style={{
-                    color: "var(--color-primary)",
-                    border: "1px solid rgba(88, 129, 87, 0.2)",
-                    borderRadius: "var(--radius-lg)",
+                    backgroundColor: "var(--color-border-light)",
+                    color: "var(--color-text-dark)",
                   }}
                 >
-                  <ExternalLink size={16} />
-                  ソース記事を開く
-                </a>
+                  <FileText size={20} />
+                </span>
+                <h2
+                  className="text-xl font-bold"
+                  style={{ color: "var(--color-text-dark)" }}
+                >
+                  記事本文
+                </h2>
+              </div>
+              <a
+                href={article.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm font-medium no-underline px-3 py-1.5 transition-colors"
+                style={{
+                  color: "var(--color-primary)",
+                  border: "1px solid rgba(88, 129, 87, 0.2)",
+                  borderRadius: "var(--radius-lg)",
+                }}
+              >
+                <ExternalLink size={16} />
+                ソース記事を開く
+              </a>
+            </div>
+
+            <div className="text-base" style={{ lineHeight: 1.8 }}>
+              {article.content ? (
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                  {article.content}
+                </ReactMarkdown>
+              ) : (
+                <p style={{ color: "var(--color-text-muted)" }}>
+                  本文は取得されていません。
+                </p>
+              )}
+            </div>
+          </section>
+
+          {/* AI Analysis Section */}
+          {hasDeepDive && (
+            <>
+              {/* Divider — full width */}
+              <div className="h-12 w-full flex items-center justify-center">
+                <div
+                  className="h-px w-full"
+                  style={{ backgroundColor: "var(--color-border)" }}
+                />
+                <span
+                  className="mx-4 text-xs font-medium uppercase tracking-widest whitespace-nowrap"
+                  style={{ color: "var(--color-text-muted)" }}
+                >
+                  AI Analysis
+                </span>
+                <div
+                  className="h-px w-full"
+                  style={{ backgroundColor: "var(--color-border)" }}
+                />
               </div>
 
-              <div className="text-lg" style={{ lineHeight: 1.8 }}>
-                {article.content ? (
-                  article.content.split("\n\n").map((paragraph, i) => (
-                    <p
-                      key={i}
-                      className={i === 0 ? "text-xl font-bold mb-6" : "mb-6"}
-                      style={{ color: "var(--color-text-dark)" }}
+              <div
+                className="overflow-hidden mb-16 transition-all duration-300"
+                style={{
+                  backgroundColor: isAnalysisOpen
+                    ? "var(--color-bg)"
+                    : "var(--color-primary-bg)",
+                  borderRadius: "1rem",
+                  border: "1px solid var(--color-border-light)",
+                  boxShadow: isAnalysisOpen
+                    ? "0 2px 20px -4px rgba(0,0,0,0.04), 0 4px 6px -2px rgba(0,0,0,0.01)"
+                    : "none",
+                }}
+              >
+                <button
+                  className="flex items-center justify-between w-full p-6 cursor-pointer select-none bg-transparent border-none text-left transition-colors"
+                  onClick={() => setIsAnalysisOpen(!isAnalysisOpen)}
+                >
+                  <div className="flex items-center gap-4">
+                    <span
+                      className="flex items-center justify-center w-10 h-10 rounded-full transition-colors duration-300"
+                      style={{
+                        backgroundColor: isAnalysisOpen
+                          ? "var(--color-primary)"
+                          : "rgba(88, 129, 87, 0.1)",
+                        color: isAnalysisOpen
+                          ? "white"
+                          : "var(--color-primary)",
+                      }}
                     >
-                      {paragraph}
-                    </p>
-                  ))
-                ) : (
-                  <p style={{ color: "var(--color-text-muted)" }}>
-                    本文は取得されていません。
-                  </p>
+                      <Brain size={24} />
+                    </span>
+                    <div>
+                      <h2
+                        className="text-lg font-bold"
+                        style={{ color: "var(--color-text-dark)" }}
+                      >
+                        AI深掘りレポート
+                      </h2>
+                      <p
+                        className="text-sm mt-0.5"
+                        style={{ color: "var(--color-text-muted)" }}
+                      >
+                        要約・キーポイント・アクションアイテム・異業種視点
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronDown
+                    size={20}
+                    className="transition-transform duration-300"
+                    style={{
+                      color: "var(--color-text-muted)",
+                      transform: isAnalysisOpen
+                        ? "rotate(180deg)"
+                        : "rotate(0deg)",
+                    }}
+                  />
+                </button>
+
+                {isAnalysisOpen && (
+                  <div
+                    style={{
+                      borderTop: "1px solid var(--color-border-light)",
+                    }}
+                  >
+                    {/* Tab Bar */}
+                    <div
+                      className="flex gap-0 px-6 pt-4"
+                      style={{ borderBottom: "1px solid var(--color-border-light)" }}
+                    >
+                      <button
+                        className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium cursor-pointer bg-transparent border-none transition-colors"
+                        style={{
+                          color: analysisTab === "report" ? "var(--color-primary)" : "var(--color-text-muted)",
+                          borderBottom: analysisTab === "report" ? "2px solid var(--color-primary)" : "2px solid transparent",
+                          marginBottom: "-1px",
+                        }}
+                        onClick={() => setAnalysisTab("report")}
+                      >
+                        <Brain size={16} />
+                        AI分析
+                      </button>
+                      {hasCrossIndustry &&
+                        article.cross_industry_feedback!.perspectives.map(
+                          (perspective, i) => (
+                            <button
+                              key={i}
+                              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium cursor-pointer bg-transparent border-none transition-colors"
+                              style={{
+                                color: analysisTab === i ? "var(--color-primary)" : "var(--color-text-muted)",
+                                borderBottom: analysisTab === i ? "2px solid var(--color-primary)" : "2px solid transparent",
+                                marginBottom: "-1px",
+                              }}
+                              onClick={() => setAnalysisTab(i)}
+                            >
+                              <Factory size={16} />
+                              {perspective.industry}
+                            </button>
+                          )
+                        )}
+                    </div>
+
+                    {/* Tab Content */}
+                    <div className="px-6 pb-8 pt-2">
+                      {analysisTab === "report" && (
+                        <div className="mt-4">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                            {article.deep_dive_report!}
+                          </ReactMarkdown>
+                        </div>
+                      )}
+                      {typeof analysisTab === "number" && hasCrossIndustry && (
+                        <div className="mt-4">
+                          <div className="flex items-center gap-3 mb-6">
+                            <div
+                              className="w-10 h-10 rounded-full flex items-center justify-center"
+                              style={{
+                                backgroundColor: "var(--color-primary-bg)",
+                                color: "var(--color-primary)",
+                              }}
+                            >
+                              <Factory size={20} />
+                            </div>
+                            <div>
+                              <h3
+                                className="text-base font-bold"
+                                style={{ color: "var(--color-text-dark)" }}
+                              >
+                                {article.cross_industry_feedback!.perspectives[analysisTab].industry}
+                                <span className="font-normal text-sm ml-2" style={{ color: "var(--color-text-muted)" }}>
+                                  の専門家視点
+                                </span>
+                              </h3>
+                            </div>
+                          </div>
+                          {(article.cross_industry_feedback!.perspectives[analysisTab].abstracted_theme
+                            || article.cross_industry_feedback!.abstracted_challenge) && (
+                            <div
+                              className="mb-6 p-4 rounded-lg"
+                              style={{
+                                backgroundColor: "var(--color-primary-bg)",
+                                border: "1px solid var(--color-border-light)",
+                              }}
+                            >
+                              <p className="text-sm font-medium mb-1" style={{ color: "var(--color-text-muted)" }}>
+                                抽象化されたテーマ
+                              </p>
+                              <p className="text-base" style={{ color: "var(--color-text-dark)", lineHeight: 1.7 }}>
+                                {article.cross_industry_feedback!.perspectives[analysisTab].abstracted_theme
+                                  || article.cross_industry_feedback!.abstracted_challenge}
+                              </p>
+                            </div>
+                          )}
+                          <div className="text-base" style={{ lineHeight: 1.8, color: "#374151" }}>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                              {article.cross_industry_feedback!.perspectives[analysisTab].expert_comment}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
-            </section>
+            </>
+          )}
 
-            {/* AI Analysis Section */}
-            {hasDeepDive && (
-              <>
-                {/* Divider */}
-                <div className="h-12 w-full flex items-center justify-center">
-                  <div
-                    className="h-px w-full max-w-xs"
-                    style={{ backgroundColor: "var(--color-border)" }}
-                  />
-                  <span
-                    className="mx-4 text-xs font-medium uppercase tracking-widest whitespace-nowrap"
-                    style={{ color: "var(--color-text-muted)" }}
-                  >
-                    AI Analysis
-                  </span>
-                  <div
-                    className="h-px w-full max-w-xs"
-                    style={{ backgroundColor: "var(--color-border)" }}
-                  />
-                </div>
-
-                <div
-                  className="overflow-hidden mb-16 transition-all duration-300"
-                  style={{
-                    backgroundColor: isAnalysisOpen
-                      ? "var(--color-bg)"
-                      : "var(--color-primary-bg)",
-                    borderRadius: "1rem",
-                    border: "1px solid var(--color-border-light)",
-                    boxShadow: isAnalysisOpen
-                      ? "0 2px 20px -4px rgba(0,0,0,0.04), 0 4px 6px -2px rgba(0,0,0,0.01)"
-                      : "none",
-                  }}
-                >
-                  <button
-                    className="flex items-center justify-between w-full p-6 cursor-pointer select-none bg-transparent border-none text-left transition-colors"
-                    onClick={() => setIsAnalysisOpen(!isAnalysisOpen)}
-                  >
-                    <div className="flex items-center gap-4">
-                      <span
-                        className="flex items-center justify-center w-10 h-10 rounded-full transition-colors duration-300"
-                        style={{
-                          backgroundColor: isAnalysisOpen
-                            ? "var(--color-primary)"
-                            : "rgba(88, 129, 87, 0.1)",
-                          color: isAnalysisOpen
-                            ? "white"
-                            : "var(--color-primary)",
-                        }}
-                      >
-                        <Brain size={24} />
-                      </span>
-                      <div>
-                        <h2
-                          className="text-lg font-bold"
-                          style={{ color: "var(--color-text-dark)" }}
-                        >
-                          詳細分析レポートを表示
-                        </h2>
-                        <p
-                          className="text-sm mt-0.5"
-                          style={{ color: "var(--color-text-muted)" }}
-                        >
-                          AIによる要約・考察・リスク分析
-                        </p>
-                      </div>
-                    </div>
-                    <ChevronDown
-                      size={20}
-                      className="transition-transform duration-300"
-                      style={{
-                        color: "var(--color-text-muted)",
-                        transform: isAnalysisOpen
-                          ? "rotate(180deg)"
-                          : "rotate(0deg)",
-                      }}
-                    />
-                  </button>
-
-                  {isAnalysisOpen && (
-                    <div
-                      className="px-6 pb-8 pt-2"
-                      style={{
-                        borderTop: "1px solid var(--color-border-light)",
-                      }}
-                    >
-                      {/* Markdown レポートをシンプルに段落表示 */}
-                      <div className="mt-6">
-                        {article.deep_dive_report!.split("\n").map((line, i) => {
-                          if (line.startsWith("## ")) {
-                            return (
-                              <h2
-                                key={i}
-                                className="font-bold mb-5"
-                                style={{
-                                  fontSize: "1.4rem",
-                                  color: "var(--color-text-dark)",
-                                  marginTop: "2.5rem",
-                                  letterSpacing: "-0.01em",
-                                }}
-                              >
-                                {line.replace("## ", "")}
-                              </h2>
-                            );
-                          }
-                          if (line.startsWith("# ")) {
-                            return (
-                              <h1
-                                key={i}
-                                className="text-xl font-bold mb-4"
-                                style={{ color: "var(--color-text-dark)", marginTop: "2rem" }}
-                              >
-                                {line.replace("# ", "")}
-                              </h1>
-                            );
-                          }
-                          if (line.startsWith("- ")) {
-                            return (
-                              <li
-                                key={i}
-                                className="mb-2 ml-6"
-                                style={{ lineHeight: 1.8, color: "#374151" }}
-                              >
-                                {line.replace("- ", "")}
-                              </li>
-                            );
-                          }
-                          if (line.trim() === "") return <br key={i} />;
-                          return (
-                            <p
-                              key={i}
-                              className="mb-4"
-                              style={{ lineHeight: 1.8, color: "#374151" }}
-                            >
-                              {line}
-                            </p>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-
-            {/* Feedback Section */}
-            <div
-              className="p-8"
-              style={{
-                backgroundColor: "var(--color-primary-bg)",
-                borderRadius: "var(--radius-lg)",
-              }}
+          {/* Feedback Section */}
+          <div
+            className="p-8"
+            style={{
+              backgroundColor: "var(--color-primary-bg)",
+              borderRadius: "var(--radius-lg)",
+            }}
+          >
+            <h3
+              className="text-base font-bold mb-6 flex items-center gap-2"
+              style={{ color: "var(--color-text-dark)" }}
             >
-              <h3
-                className="text-base font-bold mb-6 flex items-center gap-2"
-                style={{ color: "var(--color-text-dark)" }}
-              >
-                <MessageSquare
-                  size={18}
+              <MessageSquare
+                size={18}
+                style={{ color: "var(--color-text-muted)" }}
+              />
+              この記事へのフィードバック
+            </h3>
+            <div className="flex flex-col gap-6">
+              <div className="flex items-center gap-4">
+                <span
+                  className="text-sm font-medium"
                   style={{ color: "var(--color-text-muted)" }}
+                >
+                  評価:
+                </span>
+                <StarRating value={rating} onChange={setRating} />
+              </div>
+              <div>
+                <textarea
+                  className="w-full text-sm p-4 transition-shadow resize-y"
+                  style={{
+                    borderRadius: "var(--radius-lg)",
+                    border: "1px solid var(--color-border)",
+                    backgroundColor: "var(--color-bg)",
+                    minHeight: "100px",
+                    outline: "none",
+                  }}
+                  placeholder="分析に関するコメントや、追加の調査リクエストがあれば入力してください..."
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  onFocus={(e) => {
+                    e.currentTarget.style.borderColor =
+                      "var(--color-primary)";
+                    e.currentTarget.style.boxShadow =
+                      "0 0 0 2px rgba(88, 129, 87, 0.2)";
+                  }}
+                  onBlur={(e) => {
+                    e.currentTarget.style.borderColor =
+                      "var(--color-border)";
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
                 />
-                分析に対するフィードバック
-              </h3>
-              <div className="flex flex-col gap-6">
-                <div className="flex items-center gap-4">
-                  <span
-                    className="text-sm font-medium"
-                    style={{ color: "var(--color-text-muted)" }}
-                  >
-                    評価 (Relevance):
+              </div>
+              <div className="flex justify-end items-center gap-3">
+                {feedbackSent && (
+                  <span className="text-sm" style={{ color: "var(--color-primary)" }}>
+                    保存しました
                   </span>
-                  <StarRating value={rating} onChange={setRating} />
-                </div>
-                <div>
-                  <textarea
-                    className="w-full text-sm p-4 transition-shadow resize-y"
-                    style={{
-                      borderRadius: "var(--radius-lg)",
-                      border: "1px solid var(--color-border)",
-                      backgroundColor: "var(--color-bg)",
-                      minHeight: "100px",
-                      outline: "none",
-                    }}
-                    placeholder="分析に関するコメントや、追加の調査リクエストがあれば入力してください..."
-                    value={comment}
-                    onChange={(e) => setComment(e.target.value)}
-                    onFocus={(e) => {
-                      e.currentTarget.style.borderColor =
-                        "var(--color-primary)";
-                      e.currentTarget.style.boxShadow =
-                        "0 0 0 2px rgba(88, 129, 87, 0.2)";
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.borderColor =
-                        "var(--color-border)";
-                      e.currentTarget.style.boxShadow = "none";
-                    }}
-                  />
-                </div>
-                <div className="flex justify-end">
-                  <button
-                    className="px-6 py-2.5 text-sm font-medium text-white transition-all cursor-pointer border-none"
-                    style={{
-                      backgroundColor: "var(--color-primary)",
-                      borderRadius: "var(--radius-lg)",
-                      opacity: feedbackSending ? 0.6 : 1,
-                    }}
-                    onClick={handleSendFeedback}
-                    disabled={feedbackSending}
-                  >
-                    {feedbackSending ? "送信中..." : "フィードバックを送信"}
-                  </button>
-                </div>
+                )}
+                <button
+                  className="px-6 py-2.5 text-sm font-medium text-white transition-all cursor-pointer border-none"
+                  style={{
+                    backgroundColor: "var(--color-primary)",
+                    borderRadius: "var(--radius-lg)",
+                    opacity: feedbackSending || rating === 0 ? 0.6 : 1,
+                  }}
+                  onClick={handleSendFeedback}
+                  disabled={feedbackSending || rating === 0}
+                >
+                  {feedbackSending
+                    ? "保存中..."
+                    : article.user_rating
+                      ? "フィードバックを更新"
+                      : "フィードバックを保存"}
+                </button>
               </div>
             </div>
           </div>
-
-          {/* Sidebar: Cross-Industry Perspectives */}
-          {hasCrossIndustry && (
-            <div className="lg:col-span-4">
-              <h3
-                className="text-xs font-bold uppercase tracking-wider mb-4 px-1"
-                style={{ color: "var(--color-text-muted)" }}
-              >
-                業界別視点 (Cross-Industry Perspective)
-              </h3>
-              <div className="flex flex-col gap-4">
-                {article.cross_industry_feedback!.perspectives.map(
-                  (perspective, i) => (
-                    <div
-                      key={i}
-                      className="relative overflow-hidden p-6 transition-all"
-                      style={{
-                        backgroundColor: "var(--color-primary-bg)",
-                        borderRadius: "var(--radius-lg)",
-                      }}
-                    >
-                      {/* Background quote mark */}
-                      <span
-                        className="absolute select-none pointer-events-none font-serif leading-none"
-                        style={{
-                          top: "-10px",
-                          right: "12px",
-                          fontSize: "8rem",
-                          color: "var(--color-primary)",
-                          opacity: 0.06,
-                        }}
-                        aria-hidden="true"
-                      >
-                        &ldquo;
-                      </span>
-                      <div className="relative z-10">
-                        <div className="flex items-center gap-3 mb-3">
-                          <div
-                            className="w-8 h-8 rounded-full flex items-center justify-center"
-                            style={{
-                              backgroundColor: "var(--color-bg)",
-                              color: "var(--color-text-muted)",
-                              boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-                            }}
-                          >
-                            <Factory size={18} />
-                          </div>
-                          <div>
-                            <h4
-                              className="text-sm font-bold"
-                              style={{ color: "var(--color-text-dark)" }}
-                            >
-                              {perspective.industry}
-                            </h4>
-                          </div>
-                        </div>
-                        <p
-                          className="text-sm leading-relaxed pl-11"
-                          style={{ color: "var(--color-text-muted)" }}
-                        >
-                          {perspective.expert_comment}
-                        </p>
-                      </div>
-                    </div>
-                  )
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

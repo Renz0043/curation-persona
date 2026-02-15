@@ -57,11 +57,12 @@ export type Article = {
 
 export type CrossIndustryPerspective = {
   industry: string;
+  abstracted_theme?: string;
   expert_comment: string;
 };
 
 export type CrossIndustryFeedback = {
-  abstracted_challenge: string;
+  abstracted_challenge?: string; // legacy (top-level)
   perspectives: CrossIndustryPerspective[];
 };
 

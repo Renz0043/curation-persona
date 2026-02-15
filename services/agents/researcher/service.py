@@ -1,6 +1,7 @@
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
+from urllib.parse import urlparse
 
 from shared.firestore_client import FirestoreClient
 from shared.models import (
@@ -71,10 +72,15 @@ class ResearcherService:
         except Exception:
             logger.warning(f"ブックマークスクレイピング失敗: {url}", exc_info=True)
 
+        source = urlparse(url).hostname or "bookmark"
+        # www. プレフィックスを除去
+        if source.startswith("www."):
+            source = source[4:]
+
         return ScoredArticle(
             title=title,
             url=url,
-            source="bookmark",
+            source=source,
             source_type=SourceType.BOOKMARK,
             content=content,
             meta_description=meta_description,
@@ -113,13 +119,17 @@ class ResearcherService:
         )
 
         try:
-            # 高評価記事コンテキスト取得
+            # 高評価記事コンテキスト・興味プロファイル取得
             related_articles = await self.firestore.get_high_rated_articles(
                 params.user_id
             )
+            user_data = await self.firestore.get_user(params.user_id)
+            interest_profile = user_data.get("interestProfile", "")
 
             # レポート生成
-            report = await self.report_generator.generate(article, related_articles)
+            report = await self.report_generator.generate(
+                article, related_articles, interest_profile
+            )
 
             # 異業種フィードバック生成（ピックアップ記事のみ）
             cross_industry_feedback = None
@@ -177,10 +187,12 @@ class ResearcherService:
             related_articles = await self.firestore.get_high_rated_articles(
                 params.user_id
             )
+            user_data = await self.firestore.get_user(params.user_id)
+            interest_profile = user_data.get("interestProfile", "")
 
             full_report: list[str] = []
             async for chunk in self.report_generator.generate_stream(
-                article, related_articles
+                article, related_articles, interest_profile
             ):
                 full_report.append(chunk)
                 yield chunk
