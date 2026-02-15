@@ -11,7 +11,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "./firebase";
-import type { Article, Collection, UserProfile } from "./types";
+import type { Article, Collection, UserProfile, SourceConfig } from "./types";
 
 // --- Timestamp 変換ヘルパー ---
 
@@ -152,4 +152,21 @@ export function subscribeToArticle(
     }
     callback(convertArticleDoc(snapshot.id, snapshot.data()));
   });
+}
+
+// --- 書き込みヘルパー ---
+
+/** ユーザーのソース設定を更新（API Route経由） */
+export async function updateUserSources(
+  userId: string,
+  sources: SourceConfig[]
+): Promise<void> {
+  const res = await fetch("/api/users/sources", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, sources }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to update sources: ${res.status}`);
+  }
 }

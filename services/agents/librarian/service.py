@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from collections import defaultdict
+from datetime import datetime
 from typing import Optional
 
 from shared.config import settings
@@ -11,6 +13,22 @@ from shared.scraper import WebScraper
 from .scorer import ArticleScorer
 
 logger = logging.getLogger(__name__)
+
+PREFILTER_PROMPT_TEMPLATE = """\
+あなたは記事キュレーションAIです。
+ユーザーの興味プロファイルに基づいて、以下の記事一覧からユーザーが読みたいと思う記事を選んでください。
+
+## ユーザー興味プロファイル
+{interest_profile}
+
+## 記事一覧（ソース: {source_name}）
+{articles_list}
+
+## 指示
+上記の記事からユーザーの興味に関連する記事を最大{max_count}件選んでください。
+以下のJSON形式で、選んだ記事のインデックス番号（0始まり）の配列を返してください:
+{{"selected": [0, 2, 5]}}
+"""
 
 PROFILE_PROMPT_TEMPLATE = """\
 以下はユーザーが高評価をつけた記事の一覧です。
@@ -51,6 +69,13 @@ class LibrarianService:
             interest_profile = await self._ensure_interest_profile(user_id)
             articles = collection.articles
 
+            # プレフィルタ: ソース毎にタイトル+メタで最大N件に絞り込み
+            if interest_profile:
+                articles = await self._prefilter_by_source(
+                    articles, interest_profile, settings.max_articles_per_source
+                )
+                logger.info(f"プレフィルタ後: {len(articles)}件")
+
             if not interest_profile:
                 # コールドスタート: 全記事にデフォルトスコアを設定
                 logger.info("コールドスタート: デフォルトスコアを設定")
@@ -59,10 +84,10 @@ class LibrarianService:
                     article.relevance_reason = "評価データ蓄積中のため、デフォルトスコアを設定しました"
                     article.scoring_status = ScoringStatus.SCORED
             else:
-                # 通常フロー: LLMで並列スコアリング
+                # 通常フロー: タイトル+メタデータでLLM並列スコアリング
                 tasks = [
                     self.scorer.calculate_score(
-                        article_text=f"{article.title}\n{article.content or ''}",
+                        article_text=f"{article.title}\n{article.meta_description or ''}",
                         interest_profile=interest_profile,
                     )
                     for article in articles
@@ -139,6 +164,87 @@ class LibrarianService:
             logger.info(f"title_embedding 生成完了: {len(articles)}件")
         except Exception as e:
             logger.warning(f"title_embedding 生成に失敗（スコアリングは完了）: {e}")
+
+    async def _prefilter_by_source(
+        self, articles: list, interest_profile: str, max_per_source: int
+    ) -> list:
+        """ソース毎にタイトル+メタで関連度の高い記事に絞り込む。"""
+        # ソース毎にグルーピング
+        by_source: dict[str, list] = defaultdict(list)
+        for article in articles:
+            by_source[article.source].append(article)
+
+        # 上限以下のソースはスキップ、超えたソースだけLLMフィルタ
+        tasks = []
+        source_names = []
+        for source_name, source_articles in by_source.items():
+            if len(source_articles) <= max_per_source:
+                tasks.append(None)
+            else:
+                tasks.append(
+                    self._prefilter_one_source(
+                        source_name, source_articles, interest_profile, max_per_source
+                    )
+                )
+            source_names.append(source_name)
+
+        # LLMフィルタを並列実行
+        results = await asyncio.gather(
+            *[t for t in tasks if t is not None]
+        )
+
+        # 結果を組み立て
+        result_iter = iter(results)
+        filtered = []
+        for source_name, task in zip(source_names, tasks):
+            if task is None:
+                filtered.extend(by_source[source_name])
+            else:
+                filtered.extend(next(result_iter))
+
+        return filtered
+
+    async def _prefilter_one_source(
+        self,
+        source_name: str,
+        articles: list,
+        interest_profile: str,
+        max_count: int,
+    ) -> list:
+        """1ソース分の記事をプレフィルタする。"""
+        articles_list = "\n".join(
+            f"[{i}] {a.title}"
+            + (f" — {a.meta_description[:120]}" if a.meta_description else "")
+            for i, a in enumerate(articles)
+        )
+        prompt = PREFILTER_PROMPT_TEMPLATE.format(
+            interest_profile=interest_profile,
+            source_name=source_name,
+            articles_list=articles_list,
+            max_count=max_count,
+        )
+
+        try:
+            data = await self.gemini_client.generate_json(prompt)
+            selected_indices = data.get("selected", [])
+            valid_indices = [
+                i for i in selected_indices
+                if isinstance(i, int) and 0 <= i < len(articles)
+            ]
+            if valid_indices:
+                logger.info(
+                    f"プレフィルタ [{source_name}]: {len(articles)}件 → {len(valid_indices)}件"
+                )
+                return [articles[i] for i in valid_indices]
+        except Exception as e:
+            logger.warning(f"プレフィルタ失敗 [{source_name}]: {e}")
+
+        # フォールバック: 新着順で上限件数
+        articles.sort(
+            key=lambda a: a.published_at or datetime.min,
+            reverse=True,
+        )
+        return articles[:max_count]
 
     async def _ensure_interest_profile(self, user_id: str) -> Optional[str]:
         user = await self.firestore.get_user(user_id)

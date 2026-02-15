@@ -3,11 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   CalendarDays,
-  RefreshCw,
   Brain,
   Rss,
-  Check,
-  Pause,
   Trash2,
   Plus,
   Key,
@@ -19,8 +16,10 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { getUserProfile } from "@/lib/firestore";
+import { getUserProfile, updateUserSources } from "@/lib/firestore";
 import type { UserProfile, SourceConfig } from "@/lib/types";
+import { SpotlightCard } from "@/components/ui/SpotlightCard";
+import AddSourceModal from "@/components/AddSourceModal";
 
 export default function ProfilePage() {
   const { user } = useAuth();
@@ -28,7 +27,8 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [showApiKey, setShowApiKey] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [refreshHover, setRefreshHover] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addBtnHover, setAddBtnHover] = useState(false);
 
   const fetchProfile = useCallback(async () => {
     if (!user) return;
@@ -64,6 +64,34 @@ export default function ProfilePage() {
   const lastUpdated = profile?.interestProfileUpdatedAt
     ? formatDateTime(profile.interestProfileUpdatedAt)
     : "未更新";
+
+  // ソース永続化ヘルパー
+  const persistSources = async (newSources: SourceConfig[]) => {
+    if (!user || !profile) return;
+    setProfile({ ...profile, sources: newSources });
+    try {
+      await updateUserSources(user.uid, newSources);
+    } catch (e) {
+      console.error("Failed to update sources:", e);
+      setProfile({ ...profile }); // ロールバック
+    }
+  };
+
+  const handleAddSource = (source: SourceConfig) => {
+    persistSources([...feeds, source]);
+  };
+
+  const handleToggleSource = (sourceId: string) => {
+    const updated = feeds.map((f) =>
+      f.id === sourceId ? { ...f, enabled: !f.enabled } : f
+    );
+    persistSources(updated);
+  };
+
+  const handleDeleteSource = (sourceId: string) => {
+    const updated = feeds.filter((f) => f.id !== sourceId);
+    persistSources(updated);
+  };
 
   if (loading) {
     return (
@@ -110,7 +138,7 @@ export default function ProfilePage() {
               fontFamily: "var(--font-display)",
             }}
           >
-            関心プロファイル
+            興味・関心プロファイル
           </h1>
           <div
             className="flex items-center gap-1.5 text-sm"
@@ -120,23 +148,9 @@ export default function ProfilePage() {
             <span>最終更新: {lastUpdated}</span>
           </div>
         </div>
-        <button
-          className="flex items-center gap-2 px-4 py-2 text-sm font-medium cursor-pointer transition-colors duration-150"
-          style={{
-            backgroundColor: refreshHover ? "var(--color-primary-bg)" : "transparent",
-            color: "var(--color-primary)",
-            border: "1px solid var(--color-primary)",
-            borderRadius: "var(--radius-md)",
-          }}
-          onMouseEnter={() => setRefreshHover(true)}
-          onMouseLeave={() => setRefreshHover(false)}
-        >
-          <RefreshCw size={14} />
-          更新
-        </button>
       </div>
 
-      {/* AIによる関心分析 */}
+      {/* AIによるパーソナライズ分析 */}
       <section className="mb-10">
         <h2
           className="text-lg font-bold mb-4 flex items-center gap-2"
@@ -146,36 +160,30 @@ export default function ProfilePage() {
             className="inline-block w-1 h-5 rounded-full"
             style={{ backgroundColor: "var(--color-primary)" }}
           />
-          AIによる関心分析
+          AIによるパーソナライズ分析
         </h2>
-        <div
-          className="relative overflow-hidden"
-          style={{
-            backgroundColor: "var(--color-primary-bg)",
-            borderLeft: "3px solid var(--color-primary)",
-            borderRadius: "var(--radius-lg)",
-            padding: "var(--spacing-xl)",
-          }}
-        >
-          <div
-            className="flex items-center gap-2 mb-3"
-            style={{ color: "var(--color-primary)" }}
-          >
+        <SpotlightCard className="w-full">
+          <div className="relative z-10">
             <div
-              className="flex items-center justify-center w-8 h-8 rounded-full"
-              style={{ backgroundColor: "var(--color-primary)", color: "white" }}
+              className="flex items-center gap-2 mb-3"
+              style={{ color: "var(--color-primary)" }}
             >
-              <Brain size={16} />
+              <div
+                className="flex items-center justify-center w-8 h-8 rounded-full"
+                style={{ backgroundColor: "var(--color-primary)", color: "white" }}
+              >
+                <Brain size={16} />
+              </div>
+              <span className="text-sm font-semibold">パーソナライズ結果</span>
             </div>
-            <span className="text-sm font-semibold">パーソナライズ分析</span>
+            <p
+              className="text-sm leading-relaxed"
+              style={{ color: "var(--color-text-dark)" }}
+            >
+              {interestProfile || "まだ関心分析データがありません。記事を評価するとAIが自動で分析します。"}
+            </p>
           </div>
-          <p
-            className="text-sm leading-relaxed mb-4"
-            style={{ color: "var(--color-text-dark)" }}
-          >
-            {interestProfile || "まだ関心分析データがありません。記事を評価するとAIが自動で分析します。"}
-          </p>
-        </div>
+        </SpotlightCard>
       </section>
 
       {/* 情報ソース設定 */}
@@ -201,6 +209,8 @@ export default function ProfilePage() {
               key={feed.id}
               feed={feed}
               isLast={i === feeds.length - 1}
+              onToggle={() => handleToggleSource(feed.id)}
+              onDelete={() => handleDeleteSource(feed.id)}
             />
           ))}
           {feeds.length === 0 && (
@@ -213,14 +223,16 @@ export default function ProfilePage() {
           )}
         </div>
         <button
-          className="flex items-center gap-2 mt-3 px-4 py-2 text-sm font-medium cursor-not-allowed opacity-50"
+          className="flex items-center gap-2 mt-3 px-4 py-2 text-sm font-medium cursor-pointer transition-colors duration-150"
           style={{
-            backgroundColor: "transparent",
-            color: "var(--color-text-muted)",
+            backgroundColor: addBtnHover ? "var(--color-primary-bg)" : "transparent",
+            color: addBtnHover ? "var(--color-primary)" : "var(--color-text-muted)",
             border: "1px dashed var(--color-border)",
             borderRadius: "var(--radius-md)",
           }}
-          disabled
+          onMouseEnter={() => setAddBtnHover(true)}
+          onMouseLeave={() => setAddBtnHover(false)}
+          onClick={() => setShowAddModal(true)}
         >
           <Plus size={14} />
           新しいフィードを追加
@@ -326,6 +338,13 @@ export default function ProfilePage() {
           />
         </div>
       </section>
+
+      {/* ソース追加モーダル */}
+      <AddSourceModal
+        open={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        onAdd={handleAddSource}
+      />
     </div>
   );
 }
@@ -346,9 +365,13 @@ function formatDateTime(date: Date): string {
 function FeedRow({
   feed,
   isLast,
+  onToggle,
+  onDelete,
 }: {
   feed: SourceConfig;
   isLast: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
 
@@ -369,19 +392,44 @@ function FeedRow({
       >
         {feed.name}
       </span>
-      <span
-        className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium border-none"
+      <button
+        onClick={onToggle}
+        className="relative inline-flex items-center h-6 w-11 shrink-0 cursor-pointer border-none rounded-full transition-colors duration-200"
         style={{
-          backgroundColor: feed.enabled
-            ? "rgba(107, 156, 123, 0.1)"
-            : "rgba(214, 140, 140, 0.1)",
-          color: feed.enabled ? "var(--color-positive)" : "var(--color-risk)",
-          borderRadius: "var(--radius-full)",
+          backgroundColor: feed.enabled ? "var(--color-primary)" : "var(--color-border)",
         }}
+        role="switch"
+        aria-checked={feed.enabled}
+        title={feed.enabled ? "有効 — クリックで一時停止" : "一時停止 — クリックで有効化"}
       >
-        {feed.enabled ? <Check size={12} /> : <Pause size={12} />}
-        {feed.enabled ? "有効" : "一時停止"}
-      </span>
+        <span
+          className="inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200"
+          style={{
+            transform: feed.enabled ? "translateX(22px)" : "translateX(4px)",
+          }}
+        />
+      </button>
+      <button
+        onClick={onDelete}
+        className="flex items-center justify-center w-7 h-7 border-none cursor-pointer transition-colors duration-150"
+        style={{
+          backgroundColor: "transparent",
+          color: "var(--color-text-muted)",
+          borderRadius: "var(--radius-md)",
+          opacity: hovered ? 1 : 0,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = "rgba(214, 140, 140, 0.1)";
+          e.currentTarget.style.color = "var(--color-risk)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = "transparent";
+          e.currentTarget.style.color = "var(--color-text-muted)";
+        }}
+        title="削除"
+      >
+        <Trash2 size={13} />
+      </button>
     </div>
   );
 }

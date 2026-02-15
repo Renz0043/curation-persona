@@ -79,14 +79,24 @@ export default function ArchiveCard({ article }: ArchiveCardProps) {
       </h3>
 
       {/* Content preview */}
-      {article.content && (
+      {(article.meta_description || article.content) && (
         <p
           className="text-sm leading-relaxed line-clamp-2 m-0"
           style={{ color: "var(--color-text-muted)" }}
         >
-          {article.content}
+          {article.meta_description || article.content}
         </p>
       )}
+
+      {/* Detail link */}
+      <div className="flex justify-end mt-3">
+        <span
+          className="text-xs font-medium"
+          style={{ color: "var(--color-primary)" }}
+        >
+          詳細を見る →
+        </span>
+      </div>
     </Link>
   );
 }

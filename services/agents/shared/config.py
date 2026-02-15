@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     gemini_embedding_model: str = "text-embedding-004"
     embedding_dimensions: int = 768
 
+    # 収集設定
+    max_articles_per_source: int = 5
+
     # ピックアップ設定
     pickup_count: int = 2
 
