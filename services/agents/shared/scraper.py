@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -24,8 +25,46 @@ BOT_USER_AGENTS = [
     "PerplexityBot",
 ]
 
+
+class DomainThrottler:
+    """ドメイン単位の並列度制限 + アクセス間隔制御"""
+
+    def __init__(self, max_per_domain: int = 2, domain_delay: float = 1.0):
+        self._semaphores: dict[str, asyncio.Semaphore] = {}
+        self._last_access: dict[str, float] = {}
+        self._lock = asyncio.Lock()
+        self._max_per_domain = max_per_domain
+        self._domain_delay = domain_delay
+
+    @asynccontextmanager
+    async def __call__(self, url: str):
+        domain = urlparse(url).netloc
+        async with self._lock:
+            if domain not in self._semaphores:
+                self._semaphores[domain] = asyncio.Semaphore(self._max_per_domain)
+
+        async with self._semaphores[domain]:
+            async with self._lock:
+                now = asyncio.get_event_loop().time()
+                last = self._last_access.get(domain, 0)
+                wait = max(0, self._domain_delay - (now - last))
+                # 予約: 他のコルーチンが正しい待ち時間を計算できるよう先に更新
+                self._last_access[domain] = now + wait
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                yield
+            finally:
+                async with self._lock:
+                    self._last_access[domain] = asyncio.get_event_loop().time()
+
+
 class WebScraper:
     """記事本文スクレイピング（robots.txt準拠・逐次取得）"""
+
+    def __init__(self, throttler: DomainThrottler | None = None):
+        self._throttler = throttler or DomainThrottler()
+        self._robots_cache: dict[str, bool] = {}
 
     async def fetch_meta(self, url: str) -> dict[str, str | None]:
         """URLからmeta description と og:image を取得する。"""
@@ -55,11 +94,12 @@ class WebScraper:
 
         async def _fetch(article: Article) -> None:
             async with semaphore:
-                meta = await self.fetch_meta(article.url)
-                if meta["description"]:
-                    article.meta_description = meta["description"]
-                if meta["og_image"]:
-                    article.og_image = meta["og_image"]
+                async with self._throttler(article.url):
+                    meta = await self.fetch_meta(article.url)
+                    if meta["description"]:
+                        article.meta_description = meta["description"]
+                    if meta["og_image"]:
+                        article.og_image = meta["og_image"]
 
         await asyncio.gather(*[_fetch(a) for a in articles])
 
@@ -159,6 +199,9 @@ class WebScraper:
         parsed = urlparse(url)
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
 
+        if robots_url in self._robots_cache:
+            return self._robots_cache[robots_url]
+
         try:
             async with httpx.AsyncClient(
                 headers={"User-Agent": USER_AGENT},
@@ -167,9 +210,11 @@ class WebScraper:
             ) as client:
                 response = await client.get(robots_url)
                 if response.status_code != 200:
+                    self._robots_cache[robots_url] = True
                     return True
                 robots_text = response.text
         except Exception:
+            self._robots_cache[robots_url] = True
             return True
 
         rp = RobotFileParser()
@@ -178,8 +223,10 @@ class WebScraper:
         for bot_ua in BOT_USER_AGENTS:
             if not rp.can_fetch(bot_ua, url):
                 logger.info(f"robots.txt拒否: {bot_ua} -> {url}")
+                self._robots_cache[robots_url] = False
                 return False
 
+        self._robots_cache[robots_url] = True
         return True
 
     def _extract_main_content(self, html: str) -> str:

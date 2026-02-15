@@ -187,6 +187,7 @@ export default function ArticleDetailPage({
   const [analysisTab, setAnalysisTab] = useState<"report" | number>("report");
   const [feedbackSending, setFeedbackSending] = useState(false);
   const [feedbackSent, setFeedbackSent] = useState(false);
+  const [researchRequesting, setResearchRequesting] = useState(false);
 
   useEffect(() => {
     const unsub = subscribeToArticle(id, (art) => {
@@ -197,6 +198,23 @@ export default function ArticleDetailPage({
     });
     return () => unsub();
   }, [id]);
+
+  const handleRequestResearch = async () => {
+    if (!article) return;
+    setResearchRequesting(true);
+    try {
+      const res = await fetch(`/api/articles/${id}/research`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        console.error("Research request failed:", res.status);
+      }
+    } catch (e) {
+      console.error("Failed to request research:", e);
+    } finally {
+      setResearchRequesting(false);
+    }
+  };
 
   const handleSendFeedback = async () => {
     if (!article || rating === 0) return;
@@ -451,6 +469,57 @@ export default function ArticleDetailPage({
               )}
             </div>
           </section>
+
+          {/* Research Request Button */}
+          {!hasDeepDive && (
+            <section className="mb-12 flex justify-center">
+              {article.research_status === "pending" ? (
+                <div
+                  className="inline-flex items-center gap-3 px-6 py-3 text-sm font-medium"
+                  style={{
+                    color: "var(--color-text-muted)",
+                    backgroundColor: "var(--color-border-light)",
+                    borderRadius: "var(--radius-lg)",
+                  }}
+                >
+                  <Brain size={18} />
+                  リクエスト受付済み
+                </div>
+              ) : article.research_status === "researching" ? (
+                <div
+                  className="inline-flex items-center gap-3 px-6 py-3 text-sm font-medium"
+                  style={{
+                    color: "var(--color-primary)",
+                    backgroundColor: "var(--color-primary-bg)",
+                    borderRadius: "var(--radius-lg)",
+                    border: "1px solid rgba(88, 129, 87, 0.2)",
+                  }}
+                >
+                  <div
+                    className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin"
+                    style={{ borderColor: "var(--color-primary)", borderTopColor: "transparent" }}
+                  />
+                  リサーチ中...
+                </div>
+              ) : (
+                <button
+                  className="inline-flex items-center gap-3 px-6 py-3 text-sm font-medium cursor-pointer border-none transition-all"
+                  style={{
+                    color: "var(--color-primary)",
+                    backgroundColor: "var(--color-primary-bg)",
+                    borderRadius: "var(--radius-lg)",
+                    border: "1px solid rgba(88, 129, 87, 0.2)",
+                    opacity: researchRequesting ? 0.6 : 1,
+                  }}
+                  onClick={handleRequestResearch}
+                  disabled={researchRequesting}
+                >
+                  <Brain size={18} />
+                  {researchRequesting ? "リクエスト送信中..." : "深掘りリサーチを依頼"}
+                </button>
+              )}
+            </section>
+          )}
 
           {/* AI Analysis Section */}
           {hasDeepDive && (

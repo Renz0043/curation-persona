@@ -1,11 +1,17 @@
+import logging
+
 import uvicorn
 from a2a.server.apps import A2AFastAPIApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
-from fastapi import FastAPI
+from fastapi import BackgroundTasks, FastAPI
 
-from .agent_executor import CollectorAgentExecutor
+from shared.models import CollectRequest
+
+from .agent_executor import CollectorAgentExecutor, service
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -40,6 +46,12 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health():
         return {"status": "healthy"}
+
+    @app.post("/api/collect")
+    async def collect(request: CollectRequest, background_tasks: BackgroundTasks):
+        logger.info(f"Collect request: user_id={request.user_id}")
+        background_tasks.add_task(service.execute, request.user_id)
+        return {"status": "accepted"}
 
     return app
 

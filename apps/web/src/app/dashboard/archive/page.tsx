@@ -5,6 +5,7 @@ import {
   Search,
   ChevronDown,
   X,
+  Star,
   Calendar as CalendarIcon,
 } from "lucide-react";
 import CalendarPicker from "@/components/CalendarPicker";
@@ -19,6 +20,7 @@ import type { Article, Collection } from "@/lib/types";
 
 type Filters = {
   minScore: number | null;
+  minRating: number | null;
   category: string | null;
 };
 
@@ -43,6 +45,7 @@ export default function ArchivePage() {
   );
   const [filters, setFilters] = useState<Filters>({
     minScore: 0.8,
+    minRating: null,
     category: null,
   });
   const [scoreInput, setScoreInput] = useState("80");
@@ -134,6 +137,13 @@ export default function ArchivePage() {
     // スコアフィルタ
     if (filters.minScore !== null) {
       results = results.filter((a) => a.relevance_score >= filters.minScore!);
+    }
+
+    // 星評価フィルタ
+    if (filters.minRating !== null) {
+      results = results.filter(
+        (a) => a.user_rating !== undefined && a.user_rating >= filters.minRating!
+      );
     }
 
     // カテゴリフィルタ
@@ -347,6 +357,61 @@ export default function ArchivePage() {
             </div>
           )}
 
+          {/* Rating filter */}
+          {filters.minRating !== null ? (
+            <div
+              className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium"
+              style={{
+                backgroundColor: "var(--color-primary-bg)",
+                color: "var(--color-primary)",
+                borderRadius: "var(--radius-full)",
+              }}
+            >
+              <Star size={12} fill="currentColor" />
+              <span>≥ {filters.minRating}</span>
+              <button
+                onClick={() => removeFilter("minRating")}
+                className="bg-transparent border-none cursor-pointer p-0 flex items-center"
+                style={{ color: "var(--color-primary)" }}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ) : (
+            <div className="relative">
+              <select
+                onChange={(e) => {
+                  if (e.target.value) {
+                    setFilters((prev) => ({
+                      ...prev,
+                      minRating: parseInt(e.target.value, 10),
+                    }));
+                  }
+                }}
+                value=""
+                className="appearance-none px-3 py-1.5 pr-7 text-xs font-medium cursor-pointer"
+                style={{
+                  backgroundColor: "var(--color-bg)",
+                  color: "var(--color-text-muted)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "var(--radius-full)",
+                }}
+              >
+                <option value="">星評価</option>
+                <option value="1">≥ 1</option>
+                <option value="2">≥ 2</option>
+                <option value="3">≥ 3</option>
+                <option value="4">≥ 4</option>
+                <option value="5">5</option>
+              </select>
+              <ChevronDown
+                size={12}
+                className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"
+                style={{ color: "var(--color-text-muted)" }}
+              />
+            </div>
+          )}
+
           {/* Date filter — calendar toggle */}
           <div className="relative" ref={calendarRef}>
             {selectedDate ? (
@@ -425,9 +490,9 @@ export default function ArchivePage() {
             color: "var(--color-text-dark)",
           }}
         >
-          <option value="relevance">関連度順</option>
+          <option value="relevance">デフォルト</option>
           <option value="date">日付順</option>
-          <option value="score">AIスコア順</option>
+          <option value="score">関連度順</option>
         </select>
       </div>
 

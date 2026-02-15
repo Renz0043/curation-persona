@@ -102,6 +102,10 @@ class BookmarkRequest(BaseModel):
     api_key: str
 
 
+class CollectRequest(BaseModel):
+    user_id: str
+
+
 class ResearchArticleParams(BaseModel):
     user_id: str
     collection_id: str

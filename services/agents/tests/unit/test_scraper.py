@@ -1,10 +1,12 @@
+import asyncio
+import time
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 
 from shared.models import Article, ScoredArticle, SourceType
-from shared.scraper import WebScraper
+from shared.scraper import DomainThrottler, WebScraper
 
 
 def _make_article(title="テスト記事", url="https://example.com/article"):
@@ -257,3 +259,100 @@ class Test_OgImage:
         result = scraper._extract_meta(HTML_WITHOUT_IMAGE)
         assert result["og_image"] is None
         assert result["description"] == "説明文"
+
+
+class Test_DomainThrottler:
+    async def test_同一ドメインの並列度が制限される(self):
+        throttler = DomainThrottler(max_per_domain=1, domain_delay=0.0)
+        results: list[float] = []
+
+        async def _access(url: str, idx: int):
+            async with throttler(url):
+                results.append(time.monotonic())
+                await asyncio.sleep(0.1)
+
+        start = time.monotonic()
+        await asyncio.gather(
+            _access("https://example.com/a", 0),
+            _access("https://example.com/b", 1),
+            _access("https://example.com/c", 2),
+        )
+        elapsed = time.monotonic() - start
+
+        # max_per_domain=1 なので3件は逐次実行 → 0.3秒以上かかる
+        assert elapsed >= 0.25
+
+    async def test_異なるドメインは独立して並列実行される(self):
+        throttler = DomainThrottler(max_per_domain=1, domain_delay=0.0)
+
+        start = time.monotonic()
+        await asyncio.gather(
+            self._timed_access(throttler, "https://a.com/1"),
+            self._timed_access(throttler, "https://b.com/1"),
+            self._timed_access(throttler, "https://c.com/1"),
+        )
+        elapsed = time.monotonic() - start
+
+        # 異なるドメインなので並列実行 → 0.1秒程度で完了
+        assert elapsed < 0.2
+
+    async def test_ドメイン毎のアクセス間隔が守られる(self):
+        throttler = DomainThrottler(max_per_domain=2, domain_delay=0.15)
+
+        start = time.monotonic()
+        await asyncio.gather(
+            self._timed_access(throttler, "https://example.com/a", sleep=0.0),
+            self._timed_access(throttler, "https://example.com/b", sleep=0.0),
+        )
+        elapsed = time.monotonic() - start
+
+        # 2番目のアクセスは domain_delay 待ちが入る
+        assert elapsed >= 0.1
+
+    @staticmethod
+    async def _timed_access(throttler: DomainThrottler, url: str, sleep: float = 0.1):
+        async with throttler(url):
+            await asyncio.sleep(sleep)
+
+
+class Test_RobotsTxtキャッシュ:
+    async def test_同一ドメインのrobots_txtは1回だけ取得される(self):
+        scraper = WebScraper()
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.text = ROBOTS_ALLOW_ALL
+
+        with patch("shared.scraper.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            result1 = await scraper._is_allowed("https://example.com/article1")
+            result2 = await scraper._is_allowed("https://example.com/article2")
+
+        assert result1 is True
+        assert result2 is True
+        # robots.txt取得は1回のみ（2回目はキャッシュ）
+        assert mock_client.get.call_count == 1
+
+    async def test_異なるドメインのrobots_txtはそれぞれ取得される(self):
+        scraper = WebScraper()
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.text = ROBOTS_ALLOW_ALL
+
+        with patch("shared.scraper.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            await scraper._is_allowed("https://example.com/article")
+            await scraper._is_allowed("https://other.com/article")
+
+        assert mock_client.get.call_count == 2
