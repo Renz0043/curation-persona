@@ -48,7 +48,7 @@ class CollectorService:
             logger.warning(f"No enabled sources for user: {user_id}")
             return {"status": "success", "articles_total": 0, "collection_id": ""}
 
-        # 全ソースから並列取得
+        # 全ソースから並列取得（日付フィルタ済み）
         tasks = [self._fetch_with_error_handling(source) for source in sources]
         results = await asyncio.gather(*tasks)
 
