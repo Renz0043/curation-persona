@@ -1,17 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { Sparkles, ExternalLink, Search } from "lucide-react";
+import { Sparkles, ExternalLink, FileText } from "lucide-react";
 import ScoreBar from "./ScoreBar";
 import StarRating from "./StarRating";
 import type { Article } from "@/lib/types";
 
 type BriefingCardProps = {
   article: Article;
-  onRate?: (id: string, rating: number) => void;
 };
 
-export default function BriefingCard({ article, onRate }: BriefingCardProps) {
+export default function BriefingCard({ article }: BriefingCardProps) {
   const timeAgo = article.published_at
     ? getTimeAgo(article.published_at)
     : "";
@@ -62,41 +61,42 @@ export default function BriefingCard({ article, onRate }: BriefingCardProps) {
         </div>
       </div>
 
-      {/* OGP Image */}
-      {article.og_image && (
-        <div
-          className="mb-3 overflow-hidden"
-          style={{
-            borderRadius: "var(--radius-md)",
-            aspectRatio: "16 / 9",
-            backgroundColor: "var(--color-primary-bg)",
-          }}
-        >
-          <img
-            src={article.og_image}
-            alt=""
-            className="w-full h-full object-contain"
-          />
+      {/* Thumbnail + Title + Description */}
+      <div className="flex gap-4 mb-4">
+        {article.og_image && (
+          <div
+            className="shrink-0 overflow-hidden"
+            style={{
+              borderRadius: "var(--radius-md)",
+              width: "192px",
+              height: "120px",
+              backgroundColor: "var(--color-primary-bg)",
+            }}
+          >
+            <img
+              src={article.og_image}
+              alt=""
+              className="w-full h-full object-cover"
+            />
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <h2
+            className="text-lg font-bold mb-1 line-clamp-2"
+            style={{ color: "var(--color-text-dark)" }}
+          >
+            {article.title}
+          </h2>
+          {article.meta_description && (
+            <p
+              className="text-sm leading-relaxed line-clamp-2"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              {article.meta_description}
+            </p>
+          )}
         </div>
-      )}
-
-      {/* Title */}
-      <h2
-        className="text-lg font-bold mb-3"
-        style={{ color: "var(--color-text-dark)" }}
-      >
-        {article.title}
-      </h2>
-
-      {/* Meta Description */}
-      {article.meta_description && (
-        <p
-          className="text-sm leading-relaxed mb-4 line-clamp-3"
-          style={{ color: "var(--color-text-dark)" }}
-        >
-          {article.meta_description}
-        </p>
-      )}
+      </div>
 
       {/* Relevance Reason */}
       {article.relevance_reason && (
@@ -122,12 +122,10 @@ export default function BriefingCard({ article, onRate }: BriefingCardProps) {
         </div>
       )}
 
-      {/* Star Rating */}
+      {/* Star Rating (read-only) */}
+      {/* Star Rating (read-only) */}
       <div className="mb-4">
-        <StarRating
-          value={article.user_rating ?? 0}
-          onChange={(v) => onRate?.(article.id, v)}
-        />
+        <StarRating value={article.user_rating ?? 0} />
       </div>
 
       {/* Footer */}
@@ -143,7 +141,7 @@ export default function BriefingCard({ article, onRate }: BriefingCardProps) {
           style={{ color: "var(--color-primary)" }}
         >
           <ExternalLink size={14} />
-          原文を読む
+          ソース記事を開く
         </a>
         <Link
           href={`/article/${article.id}`}
@@ -163,8 +161,8 @@ export default function BriefingCard({ article, onRate }: BriefingCardProps) {
             e.currentTarget.style.color = "var(--color-primary)";
           }}
         >
-          <Search size={14} />
-          深掘りリサーチ
+          <FileText size={14} />
+          記事詳細
         </Link>
       </div>
     </article>

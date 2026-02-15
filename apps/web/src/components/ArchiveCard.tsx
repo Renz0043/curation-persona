@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Star } from "lucide-react";
 import type { Article } from "@/lib/types";
 
 type ArchiveCardProps = {
@@ -8,7 +9,6 @@ type ArchiveCardProps = {
 };
 
 export default function ArchiveCard({ article }: ArchiveCardProps) {
-  const scorePercent = Math.round(article.relevance_score * 100);
   const dateStr = article.published_at
     ? article.published_at.toISOString().slice(0, 10)
     : "";
@@ -57,17 +57,32 @@ export default function ArchiveCard({ article }: ArchiveCardProps) {
             </>
           )}
         </div>
-        <span
-          className="text-xs font-medium px-2 py-0.5"
-          style={{
-            backgroundColor: "var(--color-primary-bg)",
-            color: "var(--color-primary)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "var(--radius-sm)",
-          }}
-        >
-          AIスコア: {scorePercent}
-        </span>
+        <div className="flex items-center gap-2">
+          {article.user_rating && (
+            <span
+              className="flex items-center gap-1 text-xs font-medium px-2 py-0.5"
+              style={{
+                color: "#d97706",
+                backgroundColor: "#fef3c7",
+                borderRadius: "var(--radius-sm)",
+              }}
+            >
+              <Star size={10} fill="#d97706" stroke="#d97706" />
+              {article.user_rating}
+            </span>
+          )}
+          <span
+            className="text-xs font-medium px-2 py-0.5"
+            style={{
+              backgroundColor: "var(--color-primary-bg)",
+              color: "var(--color-primary)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-sm)",
+            }}
+          >
+            関連度: {article.relevance_score.toFixed(2)}
+          </span>
+        </div>
       </div>
 
       {/* Title */}
