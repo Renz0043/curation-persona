@@ -1,8 +1,10 @@
 AGENTS_DIR := services/agents
 VENV_BIN := .venv/bin
 EMULATOR_HOST := localhost:8080
+GCP_PROJECT := curation-persona
+GCP_REGION := asia-northeast1
 
-.PHONY: setup-backend run-collector run-librarian run-researcher run-frontend test test-unit test-cov lint lint-fix help run-emulator run-collector-emu run-librarian-emu run-researcher-emu e2e e2e-dump seed
+.PHONY: setup-backend run-collector run-librarian run-researcher run-frontend test test-unit test-cov lint lint-fix help run-emulator run-collector-emu run-librarian-emu run-researcher-emu e2e e2e-dump seed deploy-collector deploy-librarian deploy-researcher deploy-rules
 
 help: ## ヘルプを表示
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -69,3 +71,38 @@ lint: ## ruff でリント
 
 lint-fix: ## ruff でリント + 自動修正
 	cd $(AGENTS_DIR) && $(VENV_BIN)/ruff check --fix .
+
+# === Deploy ===
+
+deploy-collector: ## Collector Agent を Cloud Run にデプロイ
+	cd $(AGENTS_DIR) && gcloud run deploy collector-agent \
+		--source . \
+		--build-arg AGENT=collector \
+		--project $(GCP_PROJECT) \
+		--region $(GCP_REGION) \
+		--platform managed \
+		--allow-unauthenticated \
+		--port 8080
+
+deploy-librarian: ## Librarian Agent を Cloud Run にデプロイ
+	cd $(AGENTS_DIR) && gcloud run deploy librarian-agent \
+		--source . \
+		--build-arg AGENT=librarian \
+		--project $(GCP_PROJECT) \
+		--region $(GCP_REGION) \
+		--platform managed \
+		--allow-unauthenticated \
+		--port 8080
+
+deploy-researcher: ## Researcher Agent を Cloud Run にデプロイ
+	cd $(AGENTS_DIR) && gcloud run deploy researcher-agent \
+		--source . \
+		--build-arg AGENT=researcher \
+		--project $(GCP_PROJECT) \
+		--region $(GCP_REGION) \
+		--platform managed \
+		--allow-unauthenticated \
+		--port 8080
+
+deploy-rules: ## Firestore Security Rules をデプロイ
+	firebase deploy --only firestore:rules --project $(GCP_PROJECT)

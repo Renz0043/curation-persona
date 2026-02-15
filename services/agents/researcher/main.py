@@ -1,4 +1,5 @@
 import logging
+import os
 
 import uvicorn
 from a2a.server.apps import A2AFastAPIApplication
@@ -44,9 +45,11 @@ def create_app() -> FastAPI:
     )
     app: FastAPI = a2a_app.build()
 
+    cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000")
+    origins = [o.strip() for o in cors_origins.split(",")]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000"],
+        allow_origins=origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
