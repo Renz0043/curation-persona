@@ -54,6 +54,7 @@ ui-debug.log
 !package-lock.json
 !tsconfig.json
 !firebase.json
+!firestore.indexes.json
 !.firebaserc
 service-account*.json
 
