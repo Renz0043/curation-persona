@@ -32,9 +32,9 @@
   --radius-lg: 8px;
   --radius-full: 9999px;
 
-  /* Fonts */
-  --font-display: var(--font-noto-serif-jp), serif;
-  --font-body: var(--font-noto-sans-jp), sans-serif;
+  /* Fonts — fallback values, overridden in body where next/font variables are available */
+  --font-display: serif;
+  --font-body: sans-serif;
 
   /* Spacing */
   --spacing-xs: 4px;
@@ -53,6 +53,8 @@
 }
 
 body {
+  --font-display: var(--font-noto-serif-jp), serif;
+  --font-body: var(--font-noto-sans-jp), sans-serif;
   background: var(--color-bg);
   color: var(--color-text-dark);
   font-family: var(--font-body);
