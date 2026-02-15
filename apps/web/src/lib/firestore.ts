@@ -124,6 +124,21 @@ export async function getBookmarkArticles(
   return getArticlesByCollection(bmCollectionId, userId);
 }
 
+/** コレクションのリアルタイム監視 */
+export function subscribeToCollection(
+  collectionId: string,
+  callback: (col: Collection | null) => void
+): () => void {
+  const docRef = doc(db, "collections", collectionId);
+  return onSnapshot(docRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback(null);
+      return;
+    }
+    callback(convertCollectionDoc(snapshot.id, snapshot.data()));
+  });
+}
+
 /** 記事のリアルタイム監視 */
 export function subscribeToArticle(
   articleId: string,

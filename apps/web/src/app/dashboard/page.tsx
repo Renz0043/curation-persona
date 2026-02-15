@@ -8,6 +8,7 @@ import {
   getTodayCollection,
   getArticlesByCollection,
   getBookmarkArticles,
+  subscribeToCollection,
 } from "@/lib/firestore";
 import type { Article, Collection, CollectionStatus } from "@/lib/types";
 
@@ -59,6 +60,15 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // コレクションのリアルタイム監視（completed以外のとき）
+  useEffect(() => {
+    if (!collection || collection.status === "completed") return;
+    const unsubscribe = subscribeToCollection(collection.id, (col) => {
+      if (col) setCollection(col);
+    });
+    return unsubscribe;
+  }, [collection?.id, collection?.status]);
 
   const pickups = articles.filter((a) => a.is_pickup);
   const others = articles.filter((a) => !a.is_pickup);
@@ -130,10 +140,12 @@ export default function DashboardPage() {
         今日のブリーフィング
       </h1>
 
-      {/* Status */}
-      <div className="mb-8">
-        <StatusIndicator status={status} />
-      </div>
+      {/* Status — completed時は非表示 */}
+      {status !== "completed" && (
+        <div className="mb-8">
+          <StatusIndicator status={status} />
+        </div>
+      )}
 
       {/* Empty State */}
       {articles.length === 0 && bookmarkArticles.length === 0 && (
