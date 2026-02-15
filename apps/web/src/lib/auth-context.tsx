@@ -7,17 +7,15 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut as firebaseSignOut,
-  type User,
-} from "firebase/auth";
-import { auth } from "./firebase";
+
+const FIXED_USER_ID =
+  process.env.NEXT_PUBLIC_FIXED_USER_ID || "default_user";
+const USE_EMULATOR = process.env.NEXT_PUBLIC_USE_EMULATOR === "true";
+
+type FixedUser = { uid: string };
 
 type AuthState = {
-  user: User | null;
+  user: FixedUser | null;
   loading: boolean;
   signOut: () => Promise<void>;
 };
@@ -36,51 +34,64 @@ const TEST_EMAIL = "test@example.com";
 const TEST_PASSWORD = "testpassword123";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<FixedUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        setUser(firebaseUser);
-        setLoading(false);
-        return;
-      }
-
-      // Emulator環境ではテストユーザーで自動サインイン
-      if (process.env.NEXT_PUBLIC_USE_EMULATOR === "true") {
+    if (USE_EMULATOR) {
+      // Emulator環境: Firebase Auth で自動サインイン
+      (async () => {
         try {
-          const cred = await signInWithEmailAndPassword(
-            auth,
-            TEST_EMAIL,
-            TEST_PASSWORD
-          );
-          setUser(cred.user);
-        } catch {
-          // ユーザーが存在しない場合は作成
-          try {
-            const cred = await createUserWithEmailAndPassword(
-              auth,
-              TEST_EMAIL,
-              TEST_PASSWORD
-            );
-            setUser(cred.user);
-          } catch (e) {
-            console.error("Auto sign-in failed:", e);
-            setUser(null);
-          }
-        }
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
-    });
+          const { auth } = await import("./firebase");
+          const {
+            onAuthStateChanged,
+            signInWithEmailAndPassword,
+            createUserWithEmailAndPassword,
+          } = await import("firebase/auth");
 
-    return () => unsubscribe();
+          onAuthStateChanged(auth, async (firebaseUser) => {
+            if (firebaseUser) {
+              setUser({ uid: firebaseUser.uid });
+              setLoading(false);
+              return;
+            }
+            try {
+              const cred = await signInWithEmailAndPassword(
+                auth,
+                TEST_EMAIL,
+                TEST_PASSWORD
+              );
+              setUser({ uid: cred.user.uid });
+            } catch {
+              try {
+                const cred = await createUserWithEmailAndPassword(
+                  auth,
+                  TEST_EMAIL,
+                  TEST_PASSWORD
+                );
+                setUser({ uid: cred.user.uid });
+              } catch (e) {
+                console.error("Auto sign-in failed:", e);
+                setUser(null);
+              }
+            }
+            setLoading(false);
+          });
+        } catch (e) {
+          console.error("Firebase auth init failed:", e);
+          setUser({ uid: FIXED_USER_ID });
+          setLoading(false);
+        }
+      })();
+    } else {
+      // 本番環境: 固定user_idを即座に返す
+      setUser({ uid: FIXED_USER_ID });
+      setLoading(false);
+    }
   }, []);
 
   const handleSignOut = async () => {
-    await firebaseSignOut(auth);
+    // no-op: 認証なしモードではサインアウト不要
   };
 
   if (loading) {

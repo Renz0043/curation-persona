@@ -1,0 +1,21 @@
+runConfig:
+  concurrency: 100
+  cpu: 1
+  memoryMiB: 512
+  minInstances: 0
+  maxInstances: 2
+
+env:
+  - variable: NEXT_PUBLIC_USE_EMULATOR
+    value: "false"
+  - variable: NEXT_PUBLIC_FIXED_USER_ID
+    value: "default_user"
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: "curation-persona"
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    value: ""
+  # Cloud Run URLs（デプロイ後に設定）
+  - variable: COLLECTOR_AGENT_URL
+    value: ""
+  - variable: RESEARCHER_AGENT_URL
+    value: ""
