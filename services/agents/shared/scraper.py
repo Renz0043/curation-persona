@@ -69,15 +69,16 @@ class WebScraper:
         await self.fetch_meta_all(articles, concurrency)
 
     def _extract_meta(self, html: str) -> dict[str, str | None]:
-        """HTMLからmeta descriptionとog:imageを抽出する。"""
+        """HTMLからtitle, meta description, og:imageを抽出する。"""
         soup = BeautifulSoup(html, "html.parser")
         head = soup.find("head")
         if not head:
-            return {"description": None, "og_image": None}
+            return {"title": None, "description": None, "og_image": None}
 
+        title = self._extract_title(head)
         description = self._extract_meta_description_from_head(head)
         og_image = self._extract_og_image(head)
-        return {"description": description, "og_image": og_image}
+        return {"title": title, "description": description, "og_image": og_image}
 
     def _extract_meta_description(self, html: str) -> str | None:
         """HTMLからog:descriptionまたはmeta descriptionを抽出する。"""
@@ -92,6 +93,18 @@ class WebScraper:
         meta = head.find("meta", attrs={"name": "description"})
         if meta and meta.get("content"):
             return meta["content"].strip()
+
+        return None
+
+    def _extract_title(self, head) -> str | None:
+        """headタグからog:titleまたは<title>を抽出する。"""
+        og = head.find("meta", attrs={"property": "og:title"})
+        if og and og.get("content"):
+            return og["content"].strip()
+
+        title_tag = head.find("title")
+        if title_tag and title_tag.string:
+            return title_tag.string.strip()
 
         return None
 

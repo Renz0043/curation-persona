@@ -16,8 +16,14 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// Emulator 接続（開発環境のみ）
-if (process.env.NEXT_PUBLIC_USE_EMULATOR === "true") {
+// Emulator 接続（開発環境のみ、重複接続防止）
+let _emulatorConnected = false;
+if (
+  typeof window !== "undefined" &&
+  process.env.NEXT_PUBLIC_USE_EMULATOR === "true" &&
+  !_emulatorConnected
+) {
+  _emulatorConnected = true;
   connectAuthEmulator(auth, "http://localhost:9099", { disableWarnings: true });
   connectFirestoreEmulator(db, "localhost", 8080);
 }

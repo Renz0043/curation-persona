@@ -2,7 +2,7 @@ AGENTS_DIR := services/agents
 VENV_BIN := .venv/bin
 EMULATOR_HOST := localhost:8080
 
-.PHONY: setup-backend run-collector run-librarian run-researcher run-frontend test test-unit test-cov lint lint-fix help run-emulator run-collector-emu run-librarian-emu run-researcher-emu e2e e2e-dump
+.PHONY: setup-backend run-collector run-librarian run-researcher run-frontend test test-unit test-cov lint lint-fix help run-emulator run-collector-emu run-librarian-emu run-researcher-emu e2e e2e-dump seed
 
 help: ## ヘルプを表示
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -42,6 +42,9 @@ e2e: ## E2E パイプライン検証スクリプト実行
 
 e2e-dump: ## Emulator 内の Firestore データをダンプ
 	cd $(AGENTS_DIR) && FIRESTORE_EMULATOR_HOST=$(EMULATOR_HOST) $(VENV_BIN)/python -m scripts.dump_firestore
+
+seed: ## Emulator にフロントエンド開発用シードデータを投入
+	cd $(AGENTS_DIR) && FIRESTORE_EMULATOR_HOST=$(EMULATOR_HOST) $(VENV_BIN)/python -m scripts.seed_emulator
 
 # === Frontend ===
 

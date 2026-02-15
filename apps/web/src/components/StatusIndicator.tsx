@@ -1,4 +1,4 @@
-export type CollectionStatus = "collecting" | "scoring" | "completed";
+import type { CollectionStatus } from "@/lib/types";
 
 type StatusIndicatorProps = {
   status: CollectionStatus;
@@ -7,6 +7,7 @@ type StatusIndicatorProps = {
 const steps = [
   { key: "collecting", label: "収集" },
   { key: "scoring", label: "スコアリング" },
+  { key: "researching", label: "リサーチ" },
   { key: "completed", label: "完了" },
 ] as const;
 

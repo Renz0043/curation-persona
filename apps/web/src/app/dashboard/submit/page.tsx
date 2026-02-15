@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Send,
   Loader2,
@@ -10,35 +10,17 @@ import {
   Clock,
   Key,
 } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
+import { getBookmarkArticles } from "@/lib/firestore";
+import type { Article } from "@/lib/types";
 
 const RESEARCHER_URL =
   process.env.NEXT_PUBLIC_RESEARCHER_URL || "http://localhost:8082";
 
 const LOCALSTORAGE_KEY = "curation-persona-api-key";
 
-// モック投稿履歴
-const mockHistory = [
-  {
-    url: "https://arxiv.org/abs/2401.12345",
-    submittedAt: "2025-01-14 18:30",
-    status: "completed" as const,
-    articleId: "bm_abc123",
-  },
-  {
-    url: "https://techcrunch.com/2025/01/13/ai-agents-enterprise/",
-    submittedAt: "2025-01-13 09:15",
-    status: "completed" as const,
-    articleId: "bm_def456",
-  },
-  {
-    url: "https://www.nature.com/articles/s41586-025-00001-1",
-    submittedAt: "2025-01-12 21:00",
-    status: "processing" as const,
-    articleId: null,
-  },
-];
-
 export default function SubmitPage() {
+  const { user } = useAuth();
   const [apiKey, setApiKey] = useState("");
   const [url, setUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -46,12 +28,38 @@ export default function SubmitPage() {
     status: "success" | "error";
     message: string;
   } | null>(null);
+  const [bookmarks, setBookmarks] = useState<Article[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
 
   // localStorage からAPIキーを復元
   useEffect(() => {
     const saved = localStorage.getItem(LOCALSTORAGE_KEY);
     if (saved) setApiKey(saved);
   }, []);
+
+  // ブックマーク記事の取得
+  const fetchBookmarks = useCallback(async () => {
+    if (!user) return;
+    setLoadingHistory(true);
+    try {
+      const arts = await getBookmarkArticles(user.uid);
+      // 新しい順にソート（published_at or id）
+      arts.sort((a, b) => {
+        const ta = a.published_at?.getTime() ?? 0;
+        const tb = b.published_at?.getTime() ?? 0;
+        return tb - ta;
+      });
+      setBookmarks(arts);
+    } catch (e) {
+      console.error("Failed to fetch bookmarks:", e);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchBookmarks();
+  }, [fetchBookmarks]);
 
   // APIキー変更時に localStorage へ保存
   const handleApiKeyChange = (value: string) => {
@@ -102,6 +110,8 @@ export default function SubmitPage() {
           message: "リサーチを受け付けました。完了までしばらくお待ちください。",
         });
         setUrl("");
+        // 履歴を更新
+        setTimeout(() => fetchBookmarks(), 3000);
       } else if (response.status === 401) {
         setResult({
           status: "error",
@@ -295,7 +305,7 @@ export default function SubmitPage() {
         </form>
       </section>
 
-      {/* 投稿履歴（モック） */}
+      {/* 投稿履歴 */}
       <section>
         <h2
           className="text-lg font-bold mb-4 flex items-center gap-2"
@@ -313,71 +323,100 @@ export default function SubmitPage() {
             borderRadius: "var(--radius-lg)",
           }}
         >
-          {mockHistory.map((item, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3 px-4 py-3"
-              style={{
-                borderBottom:
-                  i === mockHistory.length - 1
-                    ? "none"
-                    : "1px solid var(--color-border)",
-              }}
-            >
-              <ExternalLink
-                size={14}
-                style={{
-                  color: "var(--color-text-muted)",
-                  flexShrink: 0,
-                }}
+          {loadingHistory ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2
+                size={16}
+                className="animate-spin"
+                style={{ color: "var(--color-text-muted)" }}
               />
-              <div className="flex-1 min-w-0">
-                <div
-                  className="text-sm truncate"
-                  style={{ color: "var(--color-text-dark)" }}
-                >
-                  {item.url}
-                </div>
-                <div
-                  className="flex items-center gap-1.5 text-xs mt-0.5"
-                  style={{ color: "var(--color-text-muted)" }}
-                >
-                  <Clock size={11} />
-                  {item.submittedAt}
-                </div>
-              </div>
               <span
-                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium"
-                style={{
-                  borderRadius: "var(--radius-full)",
-                  backgroundColor:
-                    item.status === "completed"
-                      ? "rgba(107, 156, 123, 0.1)"
-                      : "rgba(196, 164, 106, 0.1)",
-                  color:
-                    item.status === "completed"
-                      ? "var(--color-positive)"
-                      : "var(--color-accent)",
-                }}
+                className="ml-2 text-sm"
+                style={{ color: "var(--color-text-muted)" }}
               >
-                {item.status === "completed" ? (
-                  <CheckCircle size={12} />
-                ) : (
-                  <Loader2 size={12} />
-                )}
-                {item.status === "completed" ? "完了" : "処理中"}
+                読み込み中...
               </span>
-              {item.articleId && (
-                <a
-                  href={`/article/${item.articleId}`}
-                  className="text-xs font-medium no-underline"
-                  style={{ color: "var(--color-primary)" }}
-                >
-                  詳細
-                </a>
-              )}
             </div>
-          ))}
+          ) : bookmarks.length === 0 ? (
+            <div
+              className="text-center py-8 text-sm"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              投稿履歴はありません
+            </div>
+          ) : (
+            bookmarks.map((item, i) => {
+              const status = item.research_status ?? "pending";
+              const isCompleted = status === "completed";
+              return (
+                <div
+                  key={item.id}
+                  className="flex items-center gap-3 px-4 py-3"
+                  style={{
+                    borderBottom:
+                      i === bookmarks.length - 1
+                        ? "none"
+                        : "1px solid var(--color-border)",
+                  }}
+                >
+                  <ExternalLink
+                    size={14}
+                    style={{
+                      color: "var(--color-text-muted)",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div
+                      className="text-sm truncate"
+                      style={{ color: "var(--color-text-dark)" }}
+                    >
+                      {item.title || item.url}
+                    </div>
+                    <div
+                      className="flex items-center gap-1.5 text-xs mt-0.5"
+                      style={{ color: "var(--color-text-muted)" }}
+                    >
+                      <Clock size={11} />
+                      {item.url}
+                    </div>
+                  </div>
+                  <span
+                    className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium"
+                    style={{
+                      borderRadius: "var(--radius-full)",
+                      backgroundColor: isCompleted
+                        ? "rgba(107, 156, 123, 0.1)"
+                        : "rgba(196, 164, 106, 0.1)",
+                      color: isCompleted
+                        ? "var(--color-positive)"
+                        : "#c4a46a",
+                    }}
+                  >
+                    {isCompleted ? (
+                      <CheckCircle size={12} />
+                    ) : (
+                      <Loader2 size={12} />
+                    )}
+                    {isCompleted
+                      ? "完了"
+                      : status === "researching"
+                        ? "調査中"
+                        : "処理中"}
+                  </span>
+                  {isCompleted && (
+                    <a
+                      href={`/article/${item.id}`}
+                      className="text-xs font-medium no-underline"
+                      style={{ color: "var(--color-primary)" }}
+                    >
+                      詳細
+                    </a>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       </section>
     </div>

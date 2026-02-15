@@ -1,86 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import BriefingCard, { Article } from "@/components/BriefingCard";
+import { useState, useEffect, useCallback } from "react";
+import BriefingCard from "@/components/BriefingCard";
 import StatusIndicator from "@/components/StatusIndicator";
-
-// モックデータ
-const mockArticles: Article[] = [
-  {
-    id: "1",
-    title: "生成AIの次なるフロンティア：企業におけるエージェント型ワークフロー",
-    url: "https://example.com/article-1",
-    source: "TechCrunch",
-    source_type: "AI",
-    published_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-    relevance_score: 0.98,
-    relevance_reason:
-      "あなたの「自律型エージェント」への関心に非常に高く関連しています。この記事では、チャットベースのインターフェースからエージェントベースの実行モデルへの移行について議論しており、現在のリサーチプロジェクトに直接合致します。",
-    is_pickup: true,
-    content:
-      "大規模言語モデル（LLM）が単にテキストを生成するだけでなく、多段階のワークフローを能動的に計画・実行可能にする新しいフレームワークが登場しています。主要企業は、複雑なデータ分析や自動レポート作成のために、これらのエージェントシステムを試験的に導入し始めています。",
-    og_image: "https://picsum.photos/seed/ai-agents/800/400",
-    user_rating: 5,
-  },
-  {
-    id: "2",
-    title: "グリッドストレージ向け全固体電池の効率化におけるブレークスルー",
-    url: "https://example.com/article-2",
-    source: "Nature Energy",
-    source_type: "気候テック",
-    published_at: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
-    relevance_score: 0.85,
-    relevance_reason:
-      "あなたの二次的な関心事である「持続可能なエネルギーインフラ」に一致します。この論文の技術的な深さは、以前に読まれたグリッド安定性に関する文献を補完するものです。",
-    is_pickup: true,
-    content:
-      "研究者らは、より高い温度での安定性を維持する新しい電解質組成を実証しました。これにより、大規模なユーティリティストレージへの全固体電池配備における主要なボトルネックの1つが解決される可能性があります。",
-    og_image: "https://picsum.photos/seed/battery-tech/800/400",
-    user_rating: 4,
-  },
-  {
-    id: "3",
-    title: "東南アジアにおける半導体サプライチェーンの多様化が加速",
-    url: "https://example.com/article-3",
-    source: "Bloomberg",
-    source_type: "市場分析",
-    published_at: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(),
-    relevance_score: 0.72,
-    relevance_reason:
-      "ある程度関連しています。地域のサプライチェーンを明確に追跡しているわけではありませんが、これはあなたの主な関心事であるAIインフラのハードウェア可用性に影響を与えます。",
-    is_pickup: false,
-    content:
-      "大手チップメーカーが単一ソースの生産拠点への依存を減らそうとする中、ベトナムとマレーシアで記録的な投資が行われています。この変化は新たな物流回廊を生み出し、政策変更を促しています。",
-  },
-  {
-    id: "4",
-    title: "プロンプトエンジニアリングの進化：構造化推論フレームワークの台頭",
-    url: "https://example.com/article-4",
-    source: "arXiv",
-    source_type: "AI",
-    published_at: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(),
-    relevance_score: 0.65,
-    relevance_reason:
-      "プロンプト設計とLLMの活用方法に関する最新の研究です。あなたのAIエージェント開発の実践に間接的に役立つ可能性があります。",
-    is_pickup: false,
-    content:
-      "Chain-of-Thoughtを超えた新しいプロンプティング手法が提案され、複雑な推論タスクにおいて従来手法を上回る性能を示しています。特にマルチステップの計画立案においてその効果が顕著です。",
-  },
-  {
-    id: "5",
-    title: "欧州デジタル市場法の施行1年：プラットフォーム規制の現在地",
-    url: "https://example.com/article-5",
-    source: "Financial Times",
-    source_type: "規制",
-    published_at: new Date(Date.now() - 15 * 60 * 60 * 1000).toISOString(),
-    relevance_score: 0.58,
-    relevance_reason:
-      "テック規制の動向は、AI開発の方向性に間接的な影響を与えます。グローバルなプラットフォーム規制の枠組みを把握しておくことは有益です。",
-    is_pickup: false,
-    content:
-      "DMA施行から1年が経過し、大手テック企業のコンプライアンス対応が本格化しています。相互運用性要件やデータポータビリティに関する具体的な変化が見え始めています。",
-  },
-];
+import { useAuth } from "@/lib/auth-context";
+import {
+  getTodayCollection,
+  getArticlesByCollection,
+  getBookmarkArticles,
+} from "@/lib/firestore";
+import type { Article, Collection, CollectionStatus } from "@/lib/types";
 
 function formatDate(date: Date): string {
   const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
@@ -92,17 +21,93 @@ function formatDate(date: Date): string {
 }
 
 export default function DashboardPage() {
-  const [articles, setArticles] = useState(mockArticles);
+  const { user } = useAuth();
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [bookmarkArticles, setBookmarkArticles] = useState<Article[]>([]);
+  const [collection, setCollection] = useState<Collection | null>(null);
+  const [loading, setLoading] = useState(true);
   const today = new Date();
+
+  const fetchData = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      // 今日のコレクション取得
+      const col = await getTodayCollection(user.uid);
+      setCollection(col);
+
+      if (col) {
+        const arts = await getArticlesByCollection(col.id, user.uid);
+        // スコア降順でソート
+        arts.sort((a, b) => b.relevance_score - a.relevance_score);
+        setArticles(arts);
+      } else {
+        setArticles([]);
+      }
+
+      // ブックマーク記事
+      const bmArts = await getBookmarkArticles(user.uid);
+      bmArts.sort((a, b) => b.relevance_score - a.relevance_score);
+      setBookmarkArticles(bmArts);
+    } catch (e) {
+      console.error("Failed to fetch data:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const pickups = articles.filter((a) => a.is_pickup);
   const others = articles.filter((a) => !a.is_pickup);
+  const status: CollectionStatus = collection?.status ?? "completed";
 
-  const handleRate = (id: string, rating: number) => {
+  const handleRate = async (id: string, rating: number) => {
+    // ローカル更新
     setArticles((prev) =>
       prev.map((a) => (a.id === id ? { ...a, user_rating: rating } : a))
     );
+    setBookmarkArticles((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, user_rating: rating } : a))
+    );
+
+    // API経由でFirestore更新
+    if (!collection) return;
+    const article = [...articles, ...bookmarkArticles].find((a) => a.id === id);
+    if (!article) return;
+    try {
+      await fetch(`/api/collections/${article.collection_id}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          articleUrl: article.url,
+          rating,
+        }),
+      });
+    } catch (e) {
+      console.error("Failed to save rating:", e);
+    }
   };
+
+  if (loading) {
+    return (
+      <div className="max-w-4xl mx-auto px-6 py-8">
+        <div className="flex items-center justify-center py-20">
+          <div className="flex flex-col items-center gap-3">
+            <div
+              className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+              style={{ borderColor: "var(--color-primary)", borderTopColor: "transparent" }}
+            />
+            <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+              ブリーフィングを読み込み中...
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-8">
@@ -127,8 +132,20 @@ export default function DashboardPage() {
 
       {/* Status */}
       <div className="mb-8">
-        <StatusIndicator status="completed" />
+        <StatusIndicator status={status} />
       </div>
+
+      {/* Empty State */}
+      {articles.length === 0 && bookmarkArticles.length === 0 && (
+        <div className="text-center py-16">
+          <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+            今日のブリーフィングはまだありません。
+          </p>
+          <p className="text-xs mt-2" style={{ color: "var(--color-text-muted)" }}>
+            バッチ処理が完了するとここに記事が表示されます。
+          </p>
+        </div>
+      )}
 
       {/* Pickup Articles */}
       {pickups.length > 0 && (
@@ -157,7 +174,7 @@ export default function DashboardPage() {
 
       {/* Other Articles */}
       {others.length > 0 && (
-        <section>
+        <section className="mb-10">
           <h2
             className="text-lg font-bold mb-4 flex items-center gap-2"
             style={{ color: "var(--color-text-dark)" }}
@@ -170,6 +187,31 @@ export default function DashboardPage() {
           </h2>
           <div className="flex flex-col gap-6">
             {others.map((article) => (
+              <BriefingCard
+                key={article.id}
+                article={article}
+                onRate={handleRate}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Bookmark Articles */}
+      {bookmarkArticles.length > 0 && (
+        <section>
+          <h2
+            className="text-lg font-bold mb-4 flex items-center gap-2"
+            style={{ color: "var(--color-text-dark)" }}
+          >
+            <span
+              className="inline-block w-1 h-5 rounded-full"
+              style={{ backgroundColor: "var(--color-primary-soft)" }}
+            />
+            ブックマーク記事
+          </h2>
+          <div className="flex flex-col gap-6">
+            {bookmarkArticles.map((article) => (
               <BriefingCard
                 key={article.id}
                 article={article}
