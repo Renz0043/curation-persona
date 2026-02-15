@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     # スクレイピング設定
     scrape_max_count: int = 10
     scrape_delay_sec: float = 2.0
+    domain_max_concurrency: int = 2
+    domain_delay_sec: float = 1.0
 
     model_config = {"env_file": ".env"}
 
