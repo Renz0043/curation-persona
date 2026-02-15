@@ -1,4 +1,5 @@
 import logging
+import os
 
 import uvicorn
 from a2a.server.apps import A2AFastAPIApplication
@@ -25,7 +26,7 @@ def create_app() -> FastAPI:
     agent_card = AgentCard(
         name="Collector Agent",
         description="RSS/Webサイトから記事を収集し、スコアリングを依頼するエージェント",
-        url="http://localhost:8001/",
+        url=os.environ.get("AGENT_BASE_URL", "http://localhost:8001") + "/",
         version="0.1.0",
         defaultInputModes=["text/plain"],
         defaultOutputModes=["text/plain"],

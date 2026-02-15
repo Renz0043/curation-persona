@@ -27,7 +27,7 @@ def create_app() -> FastAPI:
     agent_card = AgentCard(
         name="Researcher Agent",
         description="ピックアップ記事の詳細調査レポートを生成するエージェント",
-        url="http://localhost:8003/",
+        url=os.environ.get("AGENT_BASE_URL", "http://localhost:8003") + "/",
         version="0.1.0",
         defaultInputModes=["text/plain"],
         defaultOutputModes=["text/plain"],

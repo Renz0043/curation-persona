@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { initializeApp, cert, getApps } from "firebase-admin/app";
+import { initializeApp, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
 function getAdminFirestore() {
@@ -10,10 +10,9 @@ function getAdminFirestore() {
         projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "curation-persona",
       });
     } else {
+      // App Hosting / Cloud Run ではデフォルトサービスアカウントで認証
       initializeApp({
-        credential: cert(
-          JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY || "{}")
-        ),
+        projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "curation-persona-c4747",
       });
     }
   }

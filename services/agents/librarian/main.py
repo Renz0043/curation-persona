@@ -1,3 +1,5 @@
+import os
+
 import uvicorn
 from a2a.server.apps import A2AFastAPIApplication
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -19,7 +21,7 @@ def create_app() -> FastAPI:
     agent_card = AgentCard(
         name="Librarian Agent",
         description="ユーザー評価ベースのLLMスコアリングで記事に関連性スコアを付与するエージェント",
-        url="http://localhost:8002/",
+        url=os.environ.get("AGENT_BASE_URL", "http://localhost:8002") + "/",
         version="0.1.0",
         defaultInputModes=["text/plain"],
         defaultOutputModes=["text/plain"],
