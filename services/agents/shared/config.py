@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # GCP
-    google_cloud_project: str = "curation-persona"
+    google_cloud_project: str = "curation-persona-c4747"
     firestore_database: str = "(default)"
 
     # A2A エージェント間通信

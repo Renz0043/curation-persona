@@ -1,7 +1,7 @@
 AGENTS_DIR := services/agents
 VENV_BIN := .venv/bin
 EMULATOR_HOST := localhost:8080
-GCP_PROJECT := curation-persona
+GCP_PROJECT := curation-persona-c4747
 GCP_REGION := asia-northeast1
 
 .PHONY: setup-backend run-collector run-librarian run-researcher run-frontend test test-unit test-cov lint lint-fix help run-emulator run-collector-emu run-librarian-emu run-researcher-emu e2e e2e-dump seed deploy-collector deploy-librarian deploy-researcher deploy-rules

@@ -11,11 +11,18 @@ env:
   - variable: NEXT_PUBLIC_FIXED_USER_ID
     value: "default_user"
   - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
-    value: "curation-persona"
+    value: "curation-persona-c4747"
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
-    value: ""
-  # Cloud Run URLs（デプロイ後に設定）
+    value: "AIzaSyAkNXiU3xHLlUtOWdq0ihBhcK9yW4E-0pE"
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: "curation-persona-c4747.firebaseapp.com"
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: "curation-persona-c4747.firebasestorage.app"
+  - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    value: "82085044169"
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: "1:82085044169:web:f92663ab8039a371679218"
   - variable: COLLECTOR_AGENT_URL
-    value: ""
+    value: "https://collector-agent-82085044169.asia-northeast1.run.app"
   - variable: RESEARCHER_AGENT_URL
-    value: ""
+    value: "https://researcher-agent-82085044169.asia-northeast1.run.app"
