@@ -17,11 +17,11 @@
 | ルート | ファイル | 状態 | 備考 |
 |--------|----------|------|------|
 | `/` | `app/page.tsx` | 完了 | `/dashboard` へリダイレクト |
-| `/dashboard` | `app/dashboard/page.tsx` | モック | 今日のブリーフィング画面。モック記事5件 |
-| `/dashboard/archive` | `app/dashboard/archive/page.tsx` | モック | アーカイブ検索。日付ツリー・検索・フィルター・並替。モック10件 |
-| `/article/[id]` | `app/article/[id]/page.tsx` | モック | 記事詳細・Deep Diveレポート・異業種フィードバック表示 |
-| `/dashboard/submit` | `app/dashboard/submit/page.tsx` | 実API連携+モック | 記事追加。URL投稿フォーム（実API）・投稿履歴（モック） |
-| `/dashboard/profile` | `app/dashboard/profile/page.tsx` | モック | 興味・関心プロファイル。AI分析・RSSフィード管理・APIキー・キュレーション設定 |
+| `/dashboard` | `app/dashboard/page.tsx` | Firestore連携済 | ブリーフィング + ブックマーク記事。星評価永続化 |
+| `/dashboard/archive` | `app/dashboard/archive/page.tsx` | Firestore連携済 | アーカイブ検索。日付ツリー動的生成・検索・フィルター |
+| `/article/[id]` | `app/article/[id]/page.tsx` | Firestore連携済 | 記事詳細。onSnapshotでリアルタイム更新、Markdown Deep Dive |
+| `/dashboard/submit` | `app/dashboard/submit/page.tsx` | Firestore連携済 | 記事追加（実API）+ Firestoreから投稿履歴取得 |
+| `/dashboard/profile` | `app/dashboard/profile/page.tsx` | Firestore連携済（読取のみ） | 興味プロファイル・ソース設定・APIキー表示 |
 
 ## レイアウト構成
 - `app/layout.tsx` — ルートレイアウト（フォント設定、メタデータ）
@@ -41,4 +41,9 @@
 | `StatusIndicator` | `components/StatusIndicator.tsx` | 処理ステータス表示 |
 
 ## 認証・データ連携
-現時点では全画面モックデータで動作。Firebase Auth / Firestore 連携は未実装。
+- `src/lib/auth-context.tsx` — AuthProvider + useAuth()。Emulatorモードではテストユーザー自動サインイン
+- `src/lib/firestore.ts` — Firestore読み取りヘルパー関数群
+- `src/lib/types.ts` — 共通型定義（バックエンドのPydanticモデルと対応）
+- `src/app/api/collections/[collectionId]/feedback/route.ts` — 星評価永続化API（firebase-admin使用）
+- Emulator接続: `NEXT_PUBLIC_USE_EMULATOR=true` で Auth/Firestore Emulatorに自動接続
+- シードデータ: `make seed` で Emulator にテストデータ投入

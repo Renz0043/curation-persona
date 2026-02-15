@@ -1,154 +1,123 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Search, SlidersHorizontal, ChevronDown, X } from "lucide-react";
-import DateTree from "@/components/DateTree";
-import ArchiveCard, { ArchiveArticle } from "@/components/ArchiveCard";
-
-// モックデータ
-const mockArchiveArticles: ArchiveArticle[] = [
-  {
-    id: "1",
-    title: "生成AIの次なるフロンティア：企業におけるエージェント型ワークフロー",
-    url: "https://example.com/article-1",
-    source: "TechCrunch",
-    source_type: "AI",
-    published_at: "2025-01-15",
-    relevance_score: 0.98,
-    content:
-      "大規模言語モデル（LLM）が単にテキストを生成するだけでなく、多段階のワークフローを能動的に計画・実行可能にする新しいフレームワークが登場しています。主要企業は、複雑なデータ分析や自動レポート作成のために、これらのエージェントシステムを試験的に導入し始めています。",
-    has_deep_dive: true,
-  },
-  {
-    id: "2",
-    title: "グリッドストレージ向け全固体電池の効率化におけるブレークスルー",
-    url: "https://example.com/article-2",
-    source: "Nature Energy",
-    source_type: "気候テック",
-    published_at: "2025-01-15",
-    relevance_score: 0.85,
-    content:
-      "研究者らは、より高い温度での安定性を維持する新しい電解質組成を実証しました。これにより、大規模なユーティリティストレージへの全固体電池配備における主要なボトルネックの1つが解決される可能性があります。",
-    has_deep_dive: true,
-  },
-  {
-    id: "3",
-    title: "東南アジアにおける半導体サプライチェーンの多様化が加速",
-    url: "https://example.com/article-3",
-    source: "Bloomberg",
-    source_type: "市場分析",
-    published_at: "2025-01-14",
-    relevance_score: 0.72,
-    content:
-      "大手チップメーカーが単一ソースの生産拠点への依存を減らそうとする中、ベトナムとマレーシアで記録的な投資が行われています。この変化は新たな物流回廊を生み出し、政策変更を促しています。",
-    has_deep_dive: false,
-  },
-  {
-    id: "4",
-    title: "プロンプトエンジニアリングの進化：構造化推論フレームワークの台頭",
-    url: "https://example.com/article-4",
-    source: "arXiv",
-    source_type: "AI",
-    published_at: "2025-01-14",
-    relevance_score: 0.65,
-    content:
-      "Chain-of-Thoughtを超えた新しいプロンプティング手法が提案され、複雑な推論タスクにおいて従来手法を上回る性能を示しています。特にマルチステップの計画立案においてその効果が顕著です。",
-    has_deep_dive: false,
-  },
-  {
-    id: "5",
-    title: "欧州デジタル市場法の施行1年：プラットフォーム規制の現在地",
-    url: "https://example.com/article-5",
-    source: "Financial Times",
-    source_type: "規制",
-    published_at: "2025-01-12",
-    relevance_score: 0.58,
-    content:
-      "DMA施行から1年が経過し、大手テック企業のコンプライアンス対応が本格化しています。相互運用性要件やデータポータビリティに関する具体的な変化が見え始めています。",
-    has_deep_dive: false,
-  },
-  {
-    id: "6",
-    title: "量子コンピューティングのエラー訂正：最新の実験結果",
-    url: "https://example.com/article-6",
-    source: "Science",
-    source_type: "AI",
-    published_at: "2025-01-12",
-    relevance_score: 0.91,
-    content:
-      "Googleの研究チームが論理量子ビットのエラー率を物理量子ビット以下に抑えることに成功しました。これはフォールトトレラント量子コンピュータ実現への重要なマイルストーンとなります。",
-    has_deep_dive: true,
-  },
-  {
-    id: "7",
-    title: "リモートワーク時代のオフィス再設計：ハイブリッド型ワークスペースの最前線",
-    url: "https://example.com/article-7",
-    source: "Wired",
-    source_type: "ビジネス",
-    published_at: "2025-01-11",
-    relevance_score: 0.45,
-    content:
-      "パンデミック後のオフィス回帰が進む中、企業はコラボレーションスペースとフォーカスエリアを組み合わせた新しいオフィスレイアウトを模索しています。",
-    has_deep_dive: false,
-  },
-  {
-    id: "8",
-    title: "マルチモーダルAIの医療診断への応用：放射線画像解析の新手法",
-    url: "https://example.com/article-8",
-    source: "The Lancet",
-    source_type: "AI",
-    published_at: "2025-01-11",
-    relevance_score: 0.88,
-    content:
-      "テキストと画像を統合的に処理するマルチモーダルモデルが、放射線科医の診断精度を補助する新しいアプローチとして注目されています。臨床試験では有望な結果が報告されています。",
-    has_deep_dive: true,
-  },
-  {
-    id: "9",
-    title: "サステナブルファッション：循環型経済モデルへの転換",
-    url: "https://example.com/article-9",
-    source: "Nikkei",
-    source_type: "気候テック",
-    published_at: "2025-01-10",
-    relevance_score: 0.52,
-    content:
-      "ファストファッション業界が持続可能性への圧力に直面する中、素材リサイクルとレンタルモデルを軸とした循環型ビジネスモデルが急速に成長しています。",
-    has_deep_dive: false,
-  },
-  {
-    id: "10",
-    title: "自律走行技術の法的枠組み：各国の規制動向比較",
-    url: "https://example.com/article-10",
-    source: "Reuters",
-    source_type: "規制",
-    published_at: "2025-01-10",
-    relevance_score: 0.62,
-    content:
-      "レベル4自律走行車の公道走行を認める法案が複数の国で審議されています。安全基準、責任の所在、保険制度の整備が主要な論点となっています。",
-    has_deep_dive: false,
-  },
-];
+import DateTree, { type YearGroup } from "@/components/DateTree";
+import ArchiveCard from "@/components/ArchiveCard";
+import { useAuth } from "@/lib/auth-context";
+import {
+  getCollectionHistory,
+  getArticlesByCollection,
+} from "@/lib/firestore";
+import type { Article, Collection } from "@/lib/types";
 
 type Filters = {
   minScore: number | null;
   category: string | null;
 };
 
+/** コレクション一覧から DateTree 用データを構築 */
+function buildDateTree(collections: Collection[]): YearGroup[] {
+  const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+  const dateMap = new Map<string, boolean>();
+
+  for (const col of collections) {
+    if (col.date) {
+      dateMap.set(col.date, true);
+    }
+  }
+
+  const sorted = [...dateMap.keys()].sort().reverse();
+  const yearMap = new Map<number, Map<number, { date: string; label: string; hasArticles: boolean }[]>>();
+
+  for (const dateStr of sorted) {
+    const d = new Date(dateStr + "T00:00:00");
+    const year = d.getFullYear();
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    const w = weekdays[d.getDay()];
+
+    if (!yearMap.has(year)) yearMap.set(year, new Map());
+    const monthMap = yearMap.get(year)!;
+    if (!monthMap.has(month)) monthMap.set(month, []);
+    monthMap.get(month)!.push({
+      date: dateStr,
+      label: `${month}月${day}日 (${w})`,
+      hasArticles: true,
+    });
+  }
+
+  const result: YearGroup[] = [];
+  for (const [year, monthMap] of [...yearMap.entries()].sort((a, b) => b[0] - a[0])) {
+    const months = [...monthMap.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([month, dates]) => ({
+        month,
+        label: `${month}月`,
+        dates,
+      }));
+    result.push({ year, months });
+  }
+  return result;
+}
+
 export default function ArchivePage() {
+  const { user } = useAuth();
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [allArticles, setAllArticles] = useState<Article[]>([]);
+  const [loading, setLoading] = useState(true);
+
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"relevance" | "date" | "score">("relevance");
   const [filters, setFilters] = useState<Filters>({
-    minScore: 0.8,
+    minScore: null,
     category: null,
   });
 
+  const fetchData = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const cols = await getCollectionHistory(user.uid, 60);
+      // bm_ コレクションを除外
+      const dailyCols = cols.filter((c) => c.date !== "");
+      setCollections(dailyCols);
+
+      // 全コレクションの記事を取得
+      const articlePromises = dailyCols.map((col) => getArticlesByCollection(col.id, user.uid));
+      const articleArrays = await Promise.all(articlePromises);
+      setAllArticles(articleArrays.flat());
+    } catch (e) {
+      console.error("Failed to fetch archive:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const dateTree = useMemo(() => buildDateTree(collections), [collections]);
+
+  // コレクションIDから日付を引くためのマップ
+  const collectionDateMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const col of collections) {
+      map.set(col.id, col.date);
+    }
+    return map;
+  }, [collections]);
+
   const filteredArticles = useMemo(() => {
-    let results = mockArchiveArticles;
+    let results = allArticles;
 
     // 日付フィルタ
     if (selectedDate) {
-      results = results.filter((a) => a.published_at === selectedDate);
+      results = results.filter(
+        (a) => collectionDateMap.get(a.collection_id) === selectedDate
+      );
     }
 
     // 検索クエリ
@@ -157,7 +126,7 @@ export default function ArchivePage() {
       results = results.filter(
         (a) =>
           a.title.toLowerCase().includes(q) ||
-          a.content.toLowerCase().includes(q) ||
+          (a.content ?? "").toLowerCase().includes(q) ||
           a.source.toLowerCase().includes(q)
       );
     }
@@ -175,20 +144,40 @@ export default function ArchivePage() {
     // ソート
     if (sortBy === "date") {
       results = [...results].sort(
-        (a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime()
+        (a, b) =>
+          (b.published_at?.getTime() ?? 0) - (a.published_at?.getTime() ?? 0)
       );
     } else if (sortBy === "score") {
       results = [...results].sort((a, b) => b.relevance_score - a.relevance_score);
     }
 
     return results;
-  }, [selectedDate, searchQuery, sortBy, filters]);
+  }, [allArticles, selectedDate, searchQuery, sortBy, filters, collectionDateMap]);
 
   const removeFilter = (key: keyof Filters) => {
     setFilters((prev) => ({ ...prev, [key]: null }));
   };
 
-  const categories = [...new Set(mockArchiveArticles.map((a) => a.source_type))];
+  const categories = useMemo(
+    () => [...new Set(allArticles.map((a) => a.source_type))],
+    [allArticles]
+  );
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div
+            className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+            style={{ borderColor: "var(--color-primary)", borderTopColor: "transparent" }}
+          />
+          <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+            アーカイブを読み込み中...
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen">
@@ -197,7 +186,11 @@ export default function ArchivePage() {
         className="w-48 shrink-0 border-r"
         style={{ borderColor: "var(--color-border)" }}
       >
-        <DateTree selectedDate={selectedDate} onSelectDate={setSelectedDate} />
+        <DateTree
+          selectedDate={selectedDate}
+          onSelectDate={setSelectedDate}
+          data={dateTree}
+        />
       </div>
 
       {/* Main Content */}
@@ -218,13 +211,6 @@ export default function ArchivePage() {
             >
               アーカイブ検索
             </h1>
-            <div className="flex items-center gap-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
-              <span
-                className="inline-block w-2 h-2 rounded-full"
-                style={{ backgroundColor: "var(--color-positive)" }}
-              />
-              データベース更新: 10分前
-            </div>
           </div>
 
           {/* Search Bar */}
@@ -393,25 +379,6 @@ export default function ArchivePage() {
             <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
               条件に一致する記事が見つかりませんでした。
             </p>
-          </div>
-        )}
-
-        {/* Load More */}
-        {filteredArticles.length > 0 && (
-          <div className="text-center py-6">
-            <button
-              className="flex items-center gap-1.5 mx-auto text-sm font-medium bg-transparent border-none cursor-pointer transition-colors duration-150"
-              style={{ color: "var(--color-text-muted)" }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = "var(--color-primary)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = "var(--color-text-muted)";
-              }}
-            >
-              もっと読み込む
-              <ChevronDown size={14} />
-            </button>
           </div>
         )}
       </div>

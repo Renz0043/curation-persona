@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   CalendarDays,
   RefreshCw,
@@ -18,62 +18,85 @@ import {
   Info,
   ChevronDown,
 } from "lucide-react";
-
-// --- モックデータ ---
-
-const mockProfile = {
-  summary:
-    "生成AIの技術的進化、特にLLM、自律型AIアーキテクチャ、RAG最適化手法への関心が強い傾向があります。加えて、エネルギー貯蔵技術や半導体サプライチェーンといったハードウェア・インフラ領域にも継続的な関心を示しています。規制動向については、AI規制とプラットフォーム規制の両方をフォローしており、技術と社会実装の接点に注目する傾向が見られます。",
-  lastUpdated: "2025年1月15日 14:30",
-  totalRatedArticles: 84,
-};
-
-type RssFeed = {
-  id: string;
-  name: string;
-  url: string;
-  status: "active" | "paused";
-};
-
-const initialFeeds: RssFeed[] = [
-  { id: "1", name: "TechCrunch", url: "https://techcrunch.com/feed/", status: "active" },
-  { id: "2", name: "arXiv CS.AI", url: "https://arxiv.org/rss/cs.AI", status: "active" },
-  { id: "3", name: "Hacker News Best", url: "https://hnrss.org/best", status: "active" },
-  { id: "4", name: "Nature Energy", url: "https://www.nature.com/nenergy.rss", status: "paused" },
-  { id: "5", name: "Bloomberg Technology", url: "https://feeds.bloomberg.com/technology/news.rss", status: "active" },
-];
-
-const mockApiKey = "cp_live_sk_8923472893471a2b3c4d5e6f7890abcdef";
-
-// --- ページ本体 ---
+import { useAuth } from "@/lib/auth-context";
+import { getUserProfile } from "@/lib/firestore";
+import type { UserProfile, SourceConfig } from "@/lib/types";
 
 export default function ProfilePage() {
-  const [feeds, setFeeds] = useState<RssFeed[]>(initialFeeds);
+  const { user } = useAuth();
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
   const [showApiKey, setShowApiKey] = useState(false);
   const [copied, setCopied] = useState(false);
   const [refreshHover, setRefreshHover] = useState(false);
 
-  const toggleFeedStatus = (id: string) => {
-    setFeeds((prev) =>
-      prev.map((f) =>
-        f.id === id
-          ? { ...f, status: f.status === "active" ? "paused" : "active" }
-          : f
-      )
-    );
-  };
+  const fetchProfile = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const p = await getUserProfile(user.uid);
+      setProfile(p);
+    } catch (e) {
+      console.error("Failed to fetch profile:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
 
-  const deleteFeed = (id: string) => {
-    setFeeds((prev) => prev.filter((f) => f.id !== id));
-  };
+  useEffect(() => {
+    fetchProfile();
+  }, [fetchProfile]);
+
+  const apiKey = profile?.api_key ?? "";
+  const maskedKey = apiKey
+    ? apiKey.slice(0, 14) + "••••••••••••••••••••••••"
+    : "未設定";
 
   const handleCopyKey = async () => {
-    await navigator.clipboard.writeText(mockApiKey);
+    if (!apiKey) return;
+    await navigator.clipboard.writeText(apiKey);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const maskedKey = mockApiKey.slice(0, 14) + "••••••••••••••••••••••••";
+  const feeds = profile?.sources ?? [];
+  const interestProfile = profile?.interestProfile ?? "";
+  const lastUpdated = profile?.interestProfileUpdatedAt
+    ? formatDateTime(profile.interestProfileUpdatedAt)
+    : "未更新";
+
+  if (loading) {
+    return (
+      <div className="max-w-4xl mx-auto px-6 py-8">
+        <div className="flex items-center justify-center py-20">
+          <div className="flex flex-col items-center gap-3">
+            <div
+              className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+              style={{ borderColor: "var(--color-primary)", borderTopColor: "transparent" }}
+            />
+            <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+              プロファイルを読み込み中...
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div className="max-w-4xl mx-auto px-6 py-8">
+        <div className="text-center py-16">
+          <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+            プロファイルが見つかりませんでした。
+          </p>
+          <p className="text-xs mt-2" style={{ color: "var(--color-text-muted)" }}>
+            バックエンドでユーザーデータを初期化してください。
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-8">
@@ -94,7 +117,7 @@ export default function ProfilePage() {
             style={{ color: "var(--color-text-muted)" }}
           >
             <CalendarDays size={14} />
-            <span>最終更新: {mockProfile.lastUpdated}</span>
+            <span>最終更新: {lastUpdated}</span>
           </div>
         </div>
         <button
@@ -150,14 +173,8 @@ export default function ProfilePage() {
             className="text-sm leading-relaxed mb-4"
             style={{ color: "var(--color-text-dark)" }}
           >
-            {mockProfile.summary}
+            {interestProfile || "まだ関心分析データがありません。記事を評価するとAIが自動で分析します。"}
           </p>
-          <div
-            className="text-xs"
-            style={{ color: "var(--color-text-muted)" }}
-          >
-            {mockProfile.totalRatedArticles}件の高評価記事から分析
-          </div>
         </div>
       </section>
 
@@ -184,8 +201,6 @@ export default function ProfilePage() {
               key={feed.id}
               feed={feed}
               isLast={i === feeds.length - 1}
-              onToggle={() => toggleFeedStatus(feed.id)}
-              onDelete={() => deleteFeed(feed.id)}
             />
           ))}
           {feeds.length === 0 && (
@@ -250,7 +265,7 @@ export default function ProfilePage() {
                 fontFamily: "monospace",
               }}
             >
-              {showApiKey ? mockApiKey : maskedKey}
+              {showApiKey ? apiKey || "未設定" : maskedKey}
             </code>
             <IconButton
               icon={showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -264,17 +279,12 @@ export default function ProfilePage() {
               active={copied}
               activeLabel="コピー済み"
             />
-            <IconButton
-              icon={<RefreshCw size={14} />}
-              onClick={() => {}}
-              title="再生成"
-            />
           </div>
           <p
             className="text-xs leading-relaxed"
             style={{ color: "var(--color-text-muted)" }}
           >
-            このAPIキーはSafariブックマーク連携で使用されます。キーを再生成すると、既存の連携設定を更新する必要があります。
+            このAPIキーはSafariブックマーク連携で使用されます。
           </p>
         </div>
       </section>
@@ -300,26 +310,19 @@ export default function ProfilePage() {
             padding: "var(--spacing-xl)",
           }}
         >
-          {/* 深掘り深度 */}
           <SettingRow
             label="深掘り深度"
             hint="レポート生成時の調査の深さを設定します"
             value="medium"
             disabled
-            options={[
-              { value: "medium", label: "Medium — 標準的な深掘り" },
-            ]}
+            options={[{ value: "medium", label: "Medium — 標準的な深掘り" }]}
           />
-
-          {/* 異業種視点 */}
           <SettingRow
             label="異業種視点"
             hint="エコーチェンバー防止のため、異分野の視点をどの程度含めるかを設定します"
             value="medium"
             disabled
-            options={[
-              { value: "medium", label: "Medium — 適度に異分野を含む" },
-            ]}
+            options={[{ value: "medium", label: "Medium — 適度に異分野を含む" }]}
           />
         </div>
       </section>
@@ -327,18 +330,25 @@ export default function ProfilePage() {
   );
 }
 
+// --- ヘルパー ---
+
+function formatDateTime(date: Date): string {
+  const y = date.getFullYear();
+  const m = date.getMonth() + 1;
+  const d = date.getDate();
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${y}年${m}月${d}日 ${h}:${min}`;
+}
+
 // --- サブコンポーネント ---
 
 function FeedRow({
   feed,
   isLast,
-  onToggle,
-  onDelete,
 }: {
-  feed: RssFeed;
+  feed: SourceConfig;
   isLast: boolean;
-  onToggle: () => void;
-  onDelete: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
 
@@ -359,40 +369,19 @@ function FeedRow({
       >
         {feed.name}
       </span>
-      <button
-        onClick={onToggle}
-        className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium border-none cursor-pointer transition-colors duration-150"
+      <span
+        className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium border-none"
         style={{
-          backgroundColor:
-            feed.status === "active"
-              ? "rgba(107, 156, 123, 0.1)"
-              : "rgba(214, 140, 140, 0.1)",
-          color: feed.status === "active" ? "var(--color-positive)" : "var(--color-risk)",
+          backgroundColor: feed.enabled
+            ? "rgba(107, 156, 123, 0.1)"
+            : "rgba(214, 140, 140, 0.1)",
+          color: feed.enabled ? "var(--color-positive)" : "var(--color-risk)",
           borderRadius: "var(--radius-full)",
         }}
       >
-        {feed.status === "active" ? <Check size={12} /> : <Pause size={12} />}
-        {feed.status === "active" ? "有効" : "一時停止"}
-      </button>
-      <button
-        onClick={onDelete}
-        className="flex items-center justify-center w-7 h-7 border-none cursor-pointer transition-colors duration-150"
-        style={{
-          backgroundColor: "transparent",
-          color: "var(--color-text-muted)",
-          borderRadius: "var(--radius-md)",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.color = "var(--color-risk)";
-          e.currentTarget.style.backgroundColor = "rgba(214, 140, 140, 0.1)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.color = "var(--color-text-muted)";
-          e.currentTarget.style.backgroundColor = "transparent";
-        }}
-      >
-        <Trash2 size={14} />
-      </button>
+        {feed.enabled ? <Check size={12} /> : <Pause size={12} />}
+        {feed.enabled ? "有効" : "一時停止"}
+      </span>
     </div>
   );
 }
@@ -482,16 +471,6 @@ function SettingRow({
             borderRadius: "var(--radius-md)",
             backgroundColor: disabled ? "var(--color-primary-bg)" : "var(--color-bg)",
             color: "var(--color-text-dark)",
-          }}
-          onFocus={(e) => {
-            if (!disabled) {
-              e.currentTarget.style.borderColor = "var(--color-primary)";
-              e.currentTarget.style.boxShadow = "0 0 0 2px var(--color-primary-bg)";
-            }
-          }}
-          onBlur={(e) => {
-            e.currentTarget.style.borderColor = "var(--color-border)";
-            e.currentTarget.style.boxShadow = "none";
           }}
         >
           {options.map((opt) => (

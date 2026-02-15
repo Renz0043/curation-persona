@@ -1,25 +1,17 @@
 "use client";
 
 import Link from "next/link";
-
-export type ArchiveArticle = {
-  id: string;
-  title: string;
-  url: string;
-  source: string;
-  source_type: string;
-  published_at: string;
-  relevance_score: number;
-  content: string;
-  has_deep_dive: boolean;
-};
+import type { Article } from "@/lib/types";
 
 type ArchiveCardProps = {
-  article: ArchiveArticle;
+  article: Article;
 };
 
 export default function ArchiveCard({ article }: ArchiveCardProps) {
   const scorePercent = Math.round(article.relevance_score * 100);
+  const dateStr = article.published_at
+    ? article.published_at.toISOString().slice(0, 10)
+    : "";
 
   return (
     <Link
@@ -58,8 +50,12 @@ export default function ArchiveCard({ article }: ArchiveCardProps) {
           </span>
           <span>•</span>
           <span>{article.source}</span>
-          <span>•</span>
-          <span>{article.published_at}</span>
+          {dateStr && (
+            <>
+              <span>•</span>
+              <span>{dateStr}</span>
+            </>
+          )}
         </div>
         <span
           className="text-xs font-medium px-2 py-0.5"
@@ -83,12 +79,14 @@ export default function ArchiveCard({ article }: ArchiveCardProps) {
       </h3>
 
       {/* Content preview */}
-      <p
-        className="text-sm leading-relaxed line-clamp-2 m-0"
-        style={{ color: "var(--color-text-muted)" }}
-      >
-        {article.content}
-      </p>
+      {article.content && (
+        <p
+          className="text-sm leading-relaxed line-clamp-2 m-0"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          {article.content}
+        </p>
+      )}
     </Link>
   );
 }

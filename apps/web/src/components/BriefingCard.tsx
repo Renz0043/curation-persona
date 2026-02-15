@@ -4,21 +4,7 @@ import Link from "next/link";
 import { Sparkles, ExternalLink, Search } from "lucide-react";
 import ScoreBar from "./ScoreBar";
 import StarRating from "./StarRating";
-
-export type Article = {
-  id: string;
-  title: string;
-  url: string;
-  source: string;
-  source_type: string;
-  published_at: string;
-  relevance_score: number;
-  relevance_reason: string;
-  is_pickup: boolean;
-  content: string;
-  og_image?: string;
-  user_rating?: number;
-};
+import type { Article } from "@/lib/types";
 
 type BriefingCardProps = {
   article: Article;
@@ -26,7 +12,9 @@ type BriefingCardProps = {
 };
 
 export default function BriefingCard({ article, onRate }: BriefingCardProps) {
-  const timeAgo = getTimeAgo(article.published_at);
+  const timeAgo = article.published_at
+    ? getTimeAgo(article.published_at)
+    : "";
 
   return (
     <article
@@ -59,8 +47,12 @@ export default function BriefingCard({ article, onRate }: BriefingCardProps) {
             {article.source_type}
           </span>
           <span>{article.source}</span>
-          <span>•</span>
-          <span>{timeAgo}</span>
+          {timeAgo && (
+            <>
+              <span>•</span>
+              <span>{timeAgo}</span>
+            </>
+          )}
         </div>
         <div className="text-right w-24">
           <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
@@ -72,12 +64,18 @@ export default function BriefingCard({ article, onRate }: BriefingCardProps) {
 
       {/* OGP Image */}
       {article.og_image && (
-        <div className="mb-3 overflow-hidden" style={{ borderRadius: "var(--radius-md)" }}>
+        <div
+          className="mb-3 overflow-hidden"
+          style={{
+            borderRadius: "var(--radius-md)",
+            aspectRatio: "16 / 9",
+            backgroundColor: "var(--color-primary-bg)",
+          }}
+        >
           <img
             src={article.og_image}
             alt=""
-            className="w-full object-cover"
-            style={{ maxHeight: "180px" }}
+            className="w-full h-full object-contain"
           />
         </div>
       )}
@@ -91,34 +89,38 @@ export default function BriefingCard({ article, onRate }: BriefingCardProps) {
       </h2>
 
       {/* Content Preview */}
-      <p
-        className="text-sm leading-relaxed mb-4 line-clamp-3"
-        style={{ color: "var(--color-text-dark)" }}
-      >
-        {article.content}
-      </p>
+      {article.content && (
+        <p
+          className="text-sm leading-relaxed mb-4 line-clamp-3"
+          style={{ color: "var(--color-text-dark)" }}
+        >
+          {article.content}
+        </p>
+      )}
 
       {/* Relevance Reason */}
-      <div
-        className="mb-4 text-sm leading-relaxed"
-        style={{
-          backgroundColor: "#F9FAFB",
-          borderLeft: "3px solid var(--color-primary-soft)",
-          padding: "var(--spacing-md)",
-          borderRadius: "var(--radius-sm)",
-        }}
-      >
+      {article.relevance_reason && (
         <div
-          className="flex items-center gap-1.5 font-semibold mb-1"
-          style={{ color: "var(--color-primary)" }}
+          className="mb-4 text-sm leading-relaxed"
+          style={{
+            backgroundColor: "#F9FAFB",
+            borderLeft: "3px solid var(--color-primary-soft)",
+            padding: "var(--spacing-md)",
+            borderRadius: "var(--radius-sm)",
+          }}
         >
-          <Sparkles size={14} />
-          <span>AIの選定理由</span>
+          <div
+            className="flex items-center gap-1.5 font-semibold mb-1"
+            style={{ color: "var(--color-primary)" }}
+          >
+            <Sparkles size={14} />
+            <span>AIの選定理由</span>
+          </div>
+          <p style={{ color: "var(--color-text-muted)" }}>
+            {article.relevance_reason}
+          </p>
         </div>
-        <p style={{ color: "var(--color-text-muted)" }}>
-          {article.relevance_reason}
-        </p>
-      </div>
+      )}
 
       {/* Star Rating */}
       <div className="mb-4">
@@ -169,9 +171,8 @@ export default function BriefingCard({ article, onRate }: BriefingCardProps) {
   );
 }
 
-function getTimeAgo(dateStr: string): string {
+function getTimeAgo(date: Date): string {
   const now = new Date();
-  const date = new Date(dateStr);
   const diffMs = now.getTime() - date.getTime();
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
 

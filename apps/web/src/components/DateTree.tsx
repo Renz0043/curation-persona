@@ -3,71 +3,35 @@
 import { useState } from "react";
 import { Folder, FolderOpen } from "lucide-react";
 
-type DateEntry = {
+export type DateEntry = {
   date: string; // "2025-01-15"
   label: string; // "1月15日 (水)"
   hasArticles: boolean;
 };
 
-type YearGroup = {
-  year: number;
-  months: {
-    month: number;
-    label: string; // "1月"
-    dates: DateEntry[];
-  }[];
+export type MonthGroup = {
+  month: number;
+  label: string; // "1月"
+  dates: DateEntry[];
 };
 
-// モックデータ
-const mockDateTree: YearGroup[] = [
-  {
-    year: 2025,
-    months: [
-      {
-        month: 1,
-        label: "1月",
-        dates: [
-          { date: "2025-01-15", label: "1月15日 (水)", hasArticles: true },
-          { date: "2025-01-14", label: "1月14日 (火)", hasArticles: true },
-          { date: "2025-01-13", label: "1月13日 (月)", hasArticles: false },
-          { date: "2025-01-12", label: "1月12日 (日)", hasArticles: true },
-          { date: "2025-01-11", label: "1月11日 (土)", hasArticles: true },
-          { date: "2025-01-10", label: "1月10日 (金)", hasArticles: true },
-        ],
-      },
-      {
-        month: 12,
-        label: "12月",
-        dates: [
-          { date: "2024-12-28", label: "12月28日 (土)", hasArticles: true },
-          { date: "2024-12-27", label: "12月27日 (金)", hasArticles: true },
-        ],
-      },
-    ],
-  },
-  {
-    year: 2024,
-    months: [
-      {
-        month: 11,
-        label: "11月",
-        dates: [
-          { date: "2024-11-30", label: "11月30日 (土)", hasArticles: true },
-          { date: "2024-11-29", label: "11月29日 (金)", hasArticles: true },
-        ],
-      },
-    ],
-  },
-];
+export type YearGroup = {
+  year: number;
+  months: MonthGroup[];
+};
 
 type DateTreeProps = {
   selectedDate: string | null;
   onSelectDate: (date: string | null) => void;
+  data?: YearGroup[];
 };
 
-export default function DateTree({ selectedDate, onSelectDate }: DateTreeProps) {
+export default function DateTree({ selectedDate, onSelectDate, data }: DateTreeProps) {
+  const treeData = data ?? [];
+
+  const firstYear = treeData.length > 0 ? treeData[0].year : new Date().getFullYear();
   const [expandedYears, setExpandedYears] = useState<Record<number, boolean>>({
-    2025: true,
+    [firstYear]: true,
   });
 
   const toggleYear = (year: number) => {
@@ -77,6 +41,22 @@ export default function DateTree({ selectedDate, onSelectDate }: DateTreeProps) 
   const handleDateClick = (date: string) => {
     onSelectDate(selectedDate === date ? null : date);
   };
+
+  if (treeData.length === 0) {
+    return (
+      <div className="py-4 pr-4">
+        <div
+          className="text-xs font-semibold uppercase tracking-wider mb-3 px-2"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          デイリーブリーフィング
+        </div>
+        <div className="px-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
+          データがありません
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="py-4 pr-4">
@@ -88,7 +68,7 @@ export default function DateTree({ selectedDate, onSelectDate }: DateTreeProps) 
       </div>
 
       <div className="flex flex-col gap-1">
-        {mockDateTree.map((yearGroup) => {
+        {treeData.map((yearGroup) => {
           const isExpanded = expandedYears[yearGroup.year] ?? false;
           const YearIcon = isExpanded ? FolderOpen : Folder;
 
