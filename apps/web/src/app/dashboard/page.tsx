@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { Play } from "lucide-react";
 import BriefingCard from "@/components/BriefingCard";
 import BookmarkPendingCard from "@/components/BookmarkPendingCard";
 import StatusIndicator from "@/components/StatusIndicator";
@@ -29,6 +30,8 @@ export default function DashboardPage() {
   const [bookmarkArticles, setBookmarkArticles] = useState<Article[]>([]);
   const [collection, setCollection] = useState<Collection | null>(null);
   const [loading, setLoading] = useState(true);
+  const [collectRequesting, setCollectRequesting] = useState(false);
+  const [collectTriggered, setCollectTriggered] = useState(false);
   const today = new Date();
 
   const fetchData = useCallback(async () => {
@@ -67,10 +70,14 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!collection || collection.status === "completed") return;
     const unsubscribe = subscribeToCollection(collection.id, (col) => {
-      if (col) setCollection(col);
+      if (col) {
+        setCollection(col);
+        // completed になったら記事一覧を再取得
+        if (col.status === "completed") fetchData();
+      }
     });
     return unsubscribe;
-  }, [collection?.id, collection?.status]);
+  }, [collection?.id, collection?.status, fetchData]);
 
   // 処理中のブックマーク記事をリアルタイム監視
   useEffect(() => {
@@ -99,33 +106,44 @@ export default function DashboardPage() {
     (a) => a.research_status && a.research_status !== "completed"
   );
   const status: CollectionStatus = collection?.status ?? "completed";
+  const isCollecting = status === "collecting" || status === "scoring" || status === "researching";
 
-  const handleRate = async (id: string, rating: number) => {
-    // ローカル更新
-    setArticles((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, user_rating: rating } : a))
-    );
-    setBookmarkArticles((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, user_rating: rating } : a))
-    );
-
-    // API経由でFirestore更新
-    if (!collection) return;
-    const article = [...articles, ...bookmarkArticles].find((a) => a.id === id);
-    if (!article) return;
+  const handleCollect = async () => {
+    if (!user) return;
+    setCollectRequesting(true);
     try {
-      await fetch(`/api/collections/${article.collection_id}/feedback`, {
+      const res = await fetch("/api/collect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          articleUrl: article.url,
-          rating,
-        }),
+        body: JSON.stringify({ user_id: user.uid }),
       });
+      if (res.ok) {
+        setCollectTriggered(true);
+      } else {
+        console.error("Collect request failed:", res.status);
+      }
     } catch (e) {
-      console.error("Failed to save rating:", e);
+      console.error("Failed to trigger collection:", e);
+    } finally {
+      setCollectRequesting(false);
     }
   };
+
+  // コレクション作成をポーリングで検知
+  useEffect(() => {
+    if (!collectTriggered) return;
+    const interval = setInterval(async () => {
+      await fetchData();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [collectTriggered, fetchData]);
+
+  // コレクションが見つかったらポーリング停止
+  useEffect(() => {
+    if (collectTriggered && collection && collection.status !== "completed") {
+      setCollectTriggered(false);
+    }
+  }, [collectTriggered, collection]);
 
   if (loading) {
     return (
@@ -155,21 +173,58 @@ export default function DashboardPage() {
         {formatDate(today)}
       </div>
 
-      {/* Title */}
-      <h1
-        className="text-3xl font-bold mb-6"
-        style={{
-          color: "var(--color-text-dark)",
-          fontFamily: "var(--font-display)",
-        }}
-      >
-        今日のブリーフィング
-      </h1>
+      {/* Title + Collect Button */}
+      <div className="flex items-center justify-between mb-6">
+        <h1
+          className="text-3xl font-bold"
+          style={{
+            color: "var(--color-text-dark)",
+            fontFamily: "var(--font-display)",
+          }}
+        >
+          今日のブリーフィング
+        </h1>
+        <button
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium cursor-pointer border-none transition-all"
+          style={{
+            color: "var(--color-primary)",
+            backgroundColor: "var(--color-primary-bg)",
+            borderRadius: "var(--radius-lg)",
+            border: "1px solid rgba(88, 129, 87, 0.2)",
+            opacity: isCollecting || collectRequesting || collectTriggered ? 0.6 : 1,
+          }}
+          onClick={handleCollect}
+          disabled={isCollecting || collectRequesting || collectTriggered}
+        >
+          {isCollecting || collectTriggered ? (
+            <>
+              <div
+                className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin"
+                style={{ borderColor: "var(--color-primary)", borderTopColor: "transparent" }}
+              />
+              実行中...
+            </>
+          ) : collectRequesting ? (
+            <>
+              <div
+                className="w-4 h-4 rounded-full border-2 border-t-transparent animate-spin"
+                style={{ borderColor: "var(--color-primary)", borderTopColor: "transparent" }}
+              />
+              送信中...
+            </>
+          ) : (
+            <>
+              <Play size={16} />
+              ブリーフィングを実行
+            </>
+          )}
+        </button>
+      </div>
 
-      {/* Status — completed時は非表示 */}
-      {status !== "completed" && (
+      {/* Status — 実行中 or トリガー直後 */}
+      {(status !== "completed" || collectTriggered) && (
         <div className="mb-8">
-          <StatusIndicator status={status} />
+          <StatusIndicator status={collectTriggered ? "collecting" : status} />
         </div>
       )}
 
@@ -203,7 +258,6 @@ export default function DashboardPage() {
               <BriefingCard
                 key={article.id}
                 article={article}
-                onRate={handleRate}
               />
             ))}
           </div>
@@ -228,7 +282,6 @@ export default function DashboardPage() {
               <BriefingCard
                 key={article.id}
                 article={article}
-                onRate={handleRate}
               />
             ))}
           </div>
@@ -256,7 +309,6 @@ export default function DashboardPage() {
               <BriefingCard
                 key={article.id}
                 article={article}
-                onRate={handleRate}
               />
             ))}
           </div>
