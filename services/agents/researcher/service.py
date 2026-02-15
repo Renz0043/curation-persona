@@ -58,17 +58,16 @@ class ResearcherService:
         title = url
         content = None
         meta_description = None
+        og_image = None
 
         try:
+            meta = await self.scraper.fetch_meta(url)
+            if meta.get("title"):
+                title = meta["title"]
+            meta_description = meta.get("description")
+            og_image = meta.get("og_image")
+
             content = await self.scraper.scrape(url)
-            meta_description = await self.scraper.fetch_meta_description(url)
-            if content:
-                # 本文の先頭からタイトルを推定（最初の非空行）
-                for line in content.split("\n"):
-                    stripped = line.strip()
-                    if stripped:
-                        title = stripped[:100]
-                        break
         except Exception:
             logger.warning(f"ブックマークスクレイピング失敗: {url}", exc_info=True)
 
@@ -79,6 +78,7 @@ class ResearcherService:
             source_type=SourceType.BOOKMARK,
             content=content,
             meta_description=meta_description,
+            og_image=og_image,
             scoring_status=ScoringStatus.SCORED,
             relevance_score=1.0,
             relevance_reason="ユーザーが手動でブックマーク",

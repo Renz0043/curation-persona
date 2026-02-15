@@ -136,6 +136,7 @@ class FirestoreClient:
             )
         doc = await self.db.collection("collections").document(collection_id).get()
         data = doc.to_dict()
+        data["id"] = collection_id
         articles = await self._get_articles_for_collection(collection_id)
         data["articles"] = articles
         return ArticleCollection.model_validate(data)
@@ -229,7 +230,8 @@ class FirestoreClient:
         query = query.order_by("created_at", direction="DESCENDING").limit(1)
         async for doc in query.stream():
             data = doc.to_dict()
-            articles = await self._get_articles_for_collection(data["id"])
+            data["id"] = doc.id
+            articles = await self._get_articles_for_collection(doc.id)
             data["articles"] = articles
             return ArticleCollection.model_validate(data)
         return None
