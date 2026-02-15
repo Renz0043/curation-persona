@@ -88,13 +88,13 @@ export default function BriefingCard({ article, onRate }: BriefingCardProps) {
         {article.title}
       </h2>
 
-      {/* Content Preview */}
-      {article.content && (
+      {/* Meta Description */}
+      {article.meta_description && (
         <p
           className="text-sm leading-relaxed mb-4 line-clamp-3"
           style={{ color: "var(--color-text-dark)" }}
         >
-          {article.content}
+          {article.meta_description}
         </p>
       )}
 
