@@ -11,7 +11,7 @@ import {
   Key,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { getBookmarkArticles } from "@/lib/firestore";
+import { getBookmarkArticles, subscribeToArticle } from "@/lib/firestore";
 import type { Article } from "@/lib/types";
 
 const RESEARCHER_URL =
@@ -60,6 +60,24 @@ export default function SubmitPage() {
   useEffect(() => {
     fetchBookmarks();
   }, [fetchBookmarks]);
+
+  // 処理中のブックマーク記事をリアルタイム監視
+  useEffect(() => {
+    const pendingItems = bookmarks.filter(
+      (b) => b.research_status && b.research_status !== "completed"
+    );
+    if (pendingItems.length === 0) return;
+
+    const unsubscribes = pendingItems.map((item) =>
+      subscribeToArticle(item.id, (updated) => {
+        if (!updated) return;
+        setBookmarks((prev) =>
+          prev.map((b) => (b.id === updated.id ? updated : b))
+        );
+      })
+    );
+    return () => unsubscribes.forEach((unsub) => unsub());
+  }, [bookmarks.map((b) => `${b.id}:${b.research_status}`).join(",")]);
 
   // APIキー変更時に localStorage へ保存
   const handleApiKeyChange = (value: string) => {
@@ -359,13 +377,19 @@ export default function SubmitPage() {
                         : "1px solid var(--color-border)",
                   }}
                 >
-                  <ExternalLink
-                    size={14}
-                    style={{
-                      color: "var(--color-text-muted)",
-                      flexShrink: 0,
-                    }}
-                  />
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ flexShrink: 0 }}
+                  >
+                    <ExternalLink
+                      size={14}
+                      style={{
+                        color: "var(--color-text-muted)",
+                      }}
+                    />
+                  </a>
                   <div className="flex-1 min-w-0">
                     <div
                       className="text-sm truncate"
@@ -396,7 +420,7 @@ export default function SubmitPage() {
                     {isCompleted ? (
                       <CheckCircle size={12} />
                     ) : (
-                      <Loader2 size={12} />
+                      <Loader2 size={12} className="animate-spin" />
                     )}
                     {isCompleted
                       ? "完了"
