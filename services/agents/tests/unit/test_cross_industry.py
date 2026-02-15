@@ -38,7 +38,6 @@ def _make_collection(articles=None, collection_id="col_1"):
 
 
 MOCK_FEEDBACK = {
-    "abstracted_challenge": "リソース配分と信頼構築のトレードオフ",
     "perspectives": [
         {
             "industry": "医療・ヘルスケア",

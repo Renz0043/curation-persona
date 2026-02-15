@@ -142,7 +142,6 @@ async def seed_daily_collection(db: firestore.AsyncClient, user_id: str):
             "research_status": "completed",
             "deep_dive_report": "# Claude 4.5 Sonnet 深掘りレポート\n\n## 概要\nAnthropicが発表したClaude 4.5 Sonnetは、前世代と比較して大幅な性能向上を果たしたマルチモーダルAIモデルです。\n\n## 主要な改善点\n\n### 1. マルチモーダル統合処理\n- テキスト、画像、コードの同時理解が可能に\n- ドキュメントと図表の関連性を自動的に解析\n\n### 2. コーディング支援の進化\n- 複数ファイルにまたがるリファクタリング\n- 設計パターンの自動提案\n- テストコード生成の精度向上\n\n### 3. 推論能力の強化\n- 複雑な論理的推論タスクでの正確性向上\n- 長文コンテキストでの一貫性維持\n\n## 業界への影響\nソフトウェア開発の生産性向上が見込まれ、特にスタートアップや小規模チームにとって大きなレバレッジとなる可能性があります。\n\n## キーポイント\n- マルチモーダル処理で新たなユースケースが開拓される\n- コーディング支援ツールの競争が激化\n- エンタープライズ採用の加速が予想される",
             "cross_industry_feedback": {
-                "abstracted_challenge": "高度なAI技術の実用化と組織導入における課題",
                 "perspectives": [
                     {
                         "industry": "製造業",

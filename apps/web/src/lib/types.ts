@@ -62,7 +62,6 @@ export type CrossIndustryPerspective = {
 };
 
 export type CrossIndustryFeedback = {
-  abstracted_challenge?: string; // legacy (top-level)
   perspectives: CrossIndustryPerspective[];
 };
 

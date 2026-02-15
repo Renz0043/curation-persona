@@ -67,7 +67,6 @@ class CrossIndustryPerspective(BaseModel):
 
 
 class CrossIndustryFeedback(BaseModel):
-    abstracted_challenge: str
     perspectives: list[CrossIndustryPerspective]
 
 

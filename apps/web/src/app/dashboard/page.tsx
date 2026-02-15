@@ -2,12 +2,15 @@
 
 import { useState, useEffect, useCallback } from "react";
 import BriefingCard from "@/components/BriefingCard";
+import BookmarkPendingCard from "@/components/BookmarkPendingCard";
 import StatusIndicator from "@/components/StatusIndicator";
 import { useAuth } from "@/lib/auth-context";
 import {
   getTodayCollection,
   getArticlesByCollection,
   getBookmarkArticles,
+  subscribeToCollection,
+  subscribeToArticle,
 } from "@/lib/firestore";
 import type { Article, Collection, CollectionStatus } from "@/lib/types";
 
@@ -60,8 +63,41 @@ export default function DashboardPage() {
     fetchData();
   }, [fetchData]);
 
+  // コレクションのリアルタイム監視（completed以外のとき）
+  useEffect(() => {
+    if (!collection || collection.status === "completed") return;
+    const unsubscribe = subscribeToCollection(collection.id, (col) => {
+      if (col) setCollection(col);
+    });
+    return unsubscribe;
+  }, [collection?.id, collection?.status]);
+
+  // 処理中のブックマーク記事をリアルタイム監視
+  useEffect(() => {
+    const pendingItems = bookmarkArticles.filter(
+      (b) => b.research_status && b.research_status !== "completed"
+    );
+    if (pendingItems.length === 0) return;
+
+    const unsubscribes = pendingItems.map((item) =>
+      subscribeToArticle(item.id, (updated) => {
+        if (!updated) return;
+        setBookmarkArticles((prev) =>
+          prev.map((b) => (b.id === updated.id ? updated : b))
+        );
+      })
+    );
+    return () => unsubscribes.forEach((unsub) => unsub());
+  }, [bookmarkArticles.map((b) => `${b.id}:${b.research_status}`).join(",")]);
+
   const pickups = articles.filter((a) => a.is_pickup);
   const others = articles.filter((a) => !a.is_pickup);
+  const completedBookmarks = bookmarkArticles.filter(
+    (a) => !a.research_status || a.research_status === "completed"
+  );
+  const pendingBookmarks = bookmarkArticles.filter(
+    (a) => a.research_status && a.research_status !== "completed"
+  );
   const status: CollectionStatus = collection?.status ?? "completed";
 
   const handleRate = async (id: string, rating: number) => {
@@ -130,10 +166,12 @@ export default function DashboardPage() {
         今日のブリーフィング
       </h1>
 
-      {/* Status */}
-      <div className="mb-8">
-        <StatusIndicator status={status} />
-      </div>
+      {/* Status — completed時は非表示 */}
+      {status !== "completed" && (
+        <div className="mb-8">
+          <StatusIndicator status={status} />
+        </div>
+      )}
 
       {/* Empty State */}
       {articles.length === 0 && bookmarkArticles.length === 0 && (
@@ -211,7 +249,10 @@ export default function DashboardPage() {
             ブックマーク記事
           </h2>
           <div className="flex flex-col gap-6">
-            {bookmarkArticles.map((article) => (
+            {pendingBookmarks.map((article) => (
+              <BookmarkPendingCard key={article.id} article={article} />
+            ))}
+            {completedBookmarks.map((article) => (
               <BriefingCard
                 key={article.id}
                 article={article}

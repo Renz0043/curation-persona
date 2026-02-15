@@ -265,11 +265,6 @@ async def verify_cross_industry_feedback(db: firestore.AsyncClient) -> bool:
     sub("")
 
     # 構造を表示
-    challenge = feedback.get("abstracted_challenge", "")
-    sub(f"抽象化された課題:")
-    sub(f"  {challenge}")
-    sub("")
-
     perspectives = feedback.get("perspectives", [])
     sub(f"異業種の視点 ({len(perspectives)}件):")
     for i, p in enumerate(perspectives, 1):
