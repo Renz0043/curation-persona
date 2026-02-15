@@ -8,7 +8,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from shared.models import BookmarkRequest
+from shared.models import BookmarkRequest, ResearchArticleParams
 
 from .agent_executor import ResearcherAgentExecutor, firestore, service
 
@@ -72,6 +72,21 @@ def create_app() -> FastAPI:
         background_tasks.add_task(service.create_bookmark, user_id, request.url)
 
         return {"status": "accepted", "url": request.url}
+
+    @app.post("/api/research")
+    async def create_research(
+        request: ResearchArticleParams, background_tasks: BackgroundTasks
+    ):
+        logger.info(
+            f"Research request: user_id={request.user_id}, "
+            f"collection_id={request.collection_id}, "
+            f"article_url={request.article_url}"
+        )
+
+        # バックグラウンドで深掘り実行
+        background_tasks.add_task(service.research, request)
+
+        return {"status": "accepted"}
 
     return app
 
