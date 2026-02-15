@@ -26,3 +26,5 @@ env:
     value: "https://collector-agent-82085044169.asia-northeast1.run.app"
   - variable: RESEARCHER_AGENT_URL
     value: "https://researcher-agent-82085044169.asia-northeast1.run.app"
+  - variable: NEXT_PUBLIC_RESEARCHER_URL
+    value: "https://researcher-agent-82085044169.asia-northeast1.run.app"
