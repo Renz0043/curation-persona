@@ -1,13 +1,12 @@
 FROM python:3.12-slim
 
-ARG AGENT
-ENV AGENT=${AGENT}
-
 WORKDIR /app
 
 COPY pyproject.toml .
 COPY shared/ shared/
-COPY ${AGENT}/ ${AGENT}/
+COPY collector/ collector/
+COPY librarian/ librarian/
+COPY researcher/ researcher/
 
 RUN pip install --no-cache-dir .
 

@@ -77,30 +77,27 @@ lint-fix: ## ruff でリント + 自動修正
 deploy-collector: ## Collector Agent を Cloud Run にデプロイ
 	cd $(AGENTS_DIR) && gcloud run deploy collector-agent \
 		--source . \
-		--build-arg AGENT=collector \
+		--set-env-vars AGENT=collector \
 		--project $(GCP_PROJECT) \
 		--region $(GCP_REGION) \
-		--platform managed \
 		--allow-unauthenticated \
 		--port 8080
 
 deploy-librarian: ## Librarian Agent を Cloud Run にデプロイ
 	cd $(AGENTS_DIR) && gcloud run deploy librarian-agent \
 		--source . \
-		--build-arg AGENT=librarian \
+		--set-env-vars AGENT=librarian \
 		--project $(GCP_PROJECT) \
 		--region $(GCP_REGION) \
-		--platform managed \
 		--allow-unauthenticated \
 		--port 8080
 
 deploy-researcher: ## Researcher Agent を Cloud Run にデプロイ
 	cd $(AGENTS_DIR) && gcloud run deploy researcher-agent \
 		--source . \
-		--build-arg AGENT=researcher \
+		--set-env-vars AGENT=researcher \
 		--project $(GCP_PROJECT) \
 		--region $(GCP_REGION) \
-		--platform managed \
 		--allow-unauthenticated \
 		--port 8080
 
