@@ -607,8 +607,7 @@ export default function ArticleDetailPage({
                               </h3>
                             </div>
                           </div>
-                          {(article.cross_industry_feedback!.perspectives[analysisTab].abstracted_theme
-                            || article.cross_industry_feedback!.abstracted_challenge) && (
+                          {article.cross_industry_feedback!.perspectives[analysisTab].abstracted_theme && (
                             <div
                               className="mb-6 p-4 rounded-lg"
                               style={{
@@ -620,8 +619,7 @@ export default function ArticleDetailPage({
                                 抽象化されたテーマ
                               </p>
                               <p className="text-base" style={{ color: "var(--color-text-dark)", lineHeight: 1.7 }}>
-                                {article.cross_industry_feedback!.perspectives[analysisTab].abstracted_theme
-                                  || article.cross_industry_feedback!.abstracted_challenge}
+                                {article.cross_industry_feedback!.perspectives[analysisTab].abstracted_theme}
                               </p>
                             </div>
                           )}
